@@ -136,7 +136,13 @@ async function fetchWithAuth(url: string): Promise<Response> {
     headers.Authorization = `Bearer ${token}`;
   }
   
-  return fetch(url, { headers });
+  try {
+    const response = await fetch(url, { headers });
+    return response;
+  } catch (error) {
+    // Network error or CORS issue
+    throw new Error("Failed to connect to GitHub. Please check your internet connection and try again.");
+  }
 }
 
 export async function getDefaultBranch(owner: string, repo: string): Promise<string> {
