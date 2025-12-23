@@ -70,7 +70,8 @@ function TreeNode({ node, depth }: TreeNodeProps) {
             node.path,
             node.sha
           );
-          setFileContent(content);
+          // Content from editor should always be string (text files only)
+          setFileContent(typeof content === 'string' ? content : '// Binary file');
         }
       } catch (error) {
         console.error("Failed to fetch file:", error);
