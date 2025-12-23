@@ -151,6 +151,18 @@ export async function startDevServer(
 ): Promise<void> {
   const { onStatusChange, onOutput, onServerReady, onError } = callbacks;
   
+  let serverReadyFired = false;
+  let serverReadyTimeout: ReturnType<typeof setTimeout> | null = null;
+  
+  const handleServerReady = (url: string, port?: number) => {
+    if (serverReadyFired) return;
+    serverReadyFired = true;
+    if (serverReadyTimeout) clearTimeout(serverReadyTimeout);
+    onOutput?.(`\n\x1b[32m✓ Server ready${port ? ` on port ${port}` : ''}\x1b[0m\n`);
+    onServerReady?.(url);
+    onStatusChange?.("ready");
+  };
+  
   try {
     // Install dependencies
     onStatusChange?.("installing");
@@ -186,30 +198,69 @@ export async function startDevServer(
     
     const serverProcess = await container.spawn("npm", ["run", devScript]);
     
+    // Patterns that indicate the server is ready (fallback detection)
+    const readyPatterns = [
+      /localhost:(\d+)/i,
+      /127\.0\.0\.1:(\d+)/i,
+      /listening on (?:port )?(\d+)/i,
+      /server (?:is )?(?:running|started|ready)/i,
+      /ready in \d+/i,
+      /local:\s+http/i,
+      /➜\s+local/i,
+    ];
+    
     serverProcess.output.pipeTo(
       new WritableStream({
         write(data) {
           onOutput?.(data);
+          
+          // Fallback: detect server ready from output patterns
+          if (!serverReadyFired) {
+            for (const pattern of readyPatterns) {
+              if (pattern.test(data)) {
+                // Extract port if present, construct a fallback URL
+                const portMatch = data.match(/(?:localhost|127\.0\.0\.1):(\d+)/i);
+                const port = portMatch ? parseInt(portMatch[1], 10) : 3000;
+                // Give the actual server-ready event a moment to fire
+                setTimeout(() => {
+                  if (!serverReadyFired) {
+                    onOutput?.("\n\x1b[33m⚠ Detected server ready from output (fallback)\x1b[0m\n");
+                    handleServerReady(`http://localhost:${port}`, port);
+                  }
+                }, 1000);
+                break;
+              }
+            }
+          }
         },
       })
     );
     
-    // Listen for server ready
+    // Listen for server ready event
     container.on("server-ready", (port, url) => {
-      onOutput?.(`\n\x1b[32m✓ Server ready on port ${port}\x1b[0m\n`);
-      onServerReady?.(url);
-      onStatusChange?.("ready");
+      handleServerReady(url, port);
     });
+    
+    // Set a timeout - if server-ready hasn't fired in 60 seconds, show helpful message
+    serverReadyTimeout = setTimeout(() => {
+      if (!serverReadyFired) {
+        onOutput?.("\n\x1b[33m⚠ Server is taking longer than expected...\x1b[0m\n");
+        onOutput?.("\x1b[33m  Check the terminal output above for errors.\x1b[0m\n");
+        onOutput?.("\x1b[33m  The dev server may need manual configuration.\x1b[0m\n");
+      }
+    }, 60000);
     
     // Handle server exit
     serverProcess.exit.then((code) => {
-      if (code !== 0) {
+      if (serverReadyTimeout) clearTimeout(serverReadyTimeout);
+      if (code !== 0 && !serverReadyFired) {
         onError?.(`Dev server exited with code ${code}. Check terminal for details.`);
         onStatusChange?.("error");
       }
     });
     
   } catch (error) {
+    if (serverReadyTimeout) clearTimeout(serverReadyTimeout);
     const message = error instanceof Error ? error.message : "Unknown error occurred";
     onError?.(message);
     onStatusChange?.("error");
@@ -253,6 +304,18 @@ async function serveStaticSite(
   callbacks: ContainerCallbacks
 ): Promise<void> {
   const { onStatusChange, onOutput, onServerReady, onError } = callbacks;
+
+  let serverReadyFired = false;
+  let serverReadyTimeout: ReturnType<typeof setTimeout> | null = null;
+
+  const handleServerReady = (url: string, port?: number) => {
+    if (serverReadyFired) return;
+    serverReadyFired = true;
+    if (serverReadyTimeout) clearTimeout(serverReadyTimeout);
+    onOutput?.(`\n\x1b[32m✓ Static server ready${port ? ` on port ${port}` : ''}\x1b[0m\n`);
+    onServerReady?.(url);
+    onStatusChange?.("ready");
+  };
 
   try {
     // Find the best root directory
@@ -307,24 +370,40 @@ async function serveStaticSite(
       new WritableStream({
         write(data) {
           onOutput?.(data);
+          
+          // Fallback detection for http-server
+          if (!serverReadyFired && /available on/i.test(data)) {
+            setTimeout(() => {
+              if (!serverReadyFired) {
+                handleServerReady("http://localhost:3000", 3000);
+              }
+            }, 500);
+          }
         },
       })
     );
 
     // Listen for server ready
     container.on("server-ready", (port, url) => {
-      onOutput?.(`\n\x1b[32m✓ Static server ready on port ${port}\x1b[0m\n`);
-      onServerReady?.(url);
-      onStatusChange?.("ready");
+      handleServerReady(url, port);
     });
 
+    // Timeout for static server
+    serverReadyTimeout = setTimeout(() => {
+      if (!serverReadyFired) {
+        onOutput?.("\n\x1b[33m⚠ Static server taking longer than expected...\x1b[0m\n");
+      }
+    }, 30000);
+
     serverProcess.exit.then((code) => {
-      if (code !== 0) {
+      if (serverReadyTimeout) clearTimeout(serverReadyTimeout);
+      if (code !== 0 && !serverReadyFired) {
         onError?.(`Static server exited with code ${code}.`);
         onStatusChange?.("error");
       }
     });
   } catch (error) {
+    if (serverReadyTimeout) clearTimeout(serverReadyTimeout);
     const message = error instanceof Error ? error.message : "Unknown error";
     onError?.(message);
     onStatusChange?.("error");
