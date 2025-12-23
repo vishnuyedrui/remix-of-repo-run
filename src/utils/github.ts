@@ -47,23 +47,76 @@ export function removeGitHubToken(): void {
   localStorage.removeItem(GITHUB_TOKEN_KEY);
 }
 
+// Validate GitHub username/repo name format
+// GitHub allows alphanumeric characters, hyphens, underscores, and periods
+// Cannot start/end with period or hyphen, no consecutive periods
+function isValidGitHubName(name: string): boolean {
+  if (!name || name.length === 0 || name.length > 100) {
+    return false;
+  }
+  // GitHub usernames and repo names: alphanumeric, hyphens, underscores, periods
+  // Cannot start or end with hyphen or period
+  const validPattern = /^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$|^[a-zA-Z0-9]$/;
+  if (!validPattern.test(name)) {
+    return false;
+  }
+  // No consecutive periods
+  if (name.includes('..')) {
+    return false;
+  }
+  return true;
+}
+
+// Validate branch name - prevent path traversal and special characters
+function isValidBranchName(branch: string): boolean {
+  if (!branch || branch.length === 0 || branch.length > 250) {
+    return false;
+  }
+  // Prevent path traversal attempts
+  if (branch.includes('..') || branch.includes('//') || branch.startsWith('/') || branch.endsWith('/')) {
+    return false;
+  }
+  // Only allow safe characters for branch names
+  // Git branch names can contain alphanumeric, hyphens, underscores, periods, slashes
+  const validBranchPattern = /^[a-zA-Z0-9][a-zA-Z0-9._\/-]*[a-zA-Z0-9]$|^[a-zA-Z0-9]$/;
+  return validBranchPattern.test(branch);
+}
+
 export function parseGitHubUrl(url: string): ParsedGitHubUrl | null {
   try {
+    // Sanitize input - trim whitespace
+    const sanitizedUrl = url.trim();
+    
+    if (!sanitizedUrl || sanitizedUrl.length > 500) {
+      return null;
+    }
+
     const patterns = [
       // https://github.com/owner/repo
       /^https?:\/\/github\.com\/([^\/]+)\/([^\/]+)\/?$/,
       // https://github.com/owner/repo/tree/branch
-      /^https?:\/\/github\.com\/([^\/]+)\/([^\/]+)\/tree\/([^\/]+)/,
+      /^https?:\/\/github\.com\/([^\/]+)\/([^\/]+)\/tree\/([^\/]+(?:\/[^\/]+)*)/,
       // owner/repo format
       /^([^\/]+)\/([^\/]+)$/,
     ];
 
     for (const pattern of patterns) {
-      const match = url.match(pattern);
+      const match = sanitizedUrl.match(pattern);
       if (match) {
         const owner = match[1];
         const repo = match[2].replace(/\.git$/, "");
         const branch = match[3] || "main";
+        
+        // Validate owner and repo names
+        if (!isValidGitHubName(owner) || !isValidGitHubName(repo)) {
+          return null;
+        }
+        
+        // Validate branch name
+        if (!isValidBranchName(branch)) {
+          return null;
+        }
+        
         return { owner, repo, branch };
       }
     }
