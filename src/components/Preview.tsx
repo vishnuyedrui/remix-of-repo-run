@@ -1,13 +1,15 @@
 import { useWorkspaceStore } from "@/store/useWorkspaceStore";
-import { ExternalLink, Loader2, Monitor, RefreshCw, AlertTriangle, Copy, Check, Code2 } from "lucide-react";
+import { Maximize2, Minimize2, Loader2, Monitor, RefreshCw, AlertTriangle, Copy, Check, Code2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
 import { checkWebContainerSupport } from "@/utils/webcontainer";
+import { cn } from "@/lib/utils";
 
 export function Preview() {
   const { previewUrl, containerStatus, error, projectInfo } = useWorkspaceStore();
   const [key, setKey] = useState(0);
   const [copied, setCopied] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   const isLoading = ["booting", "mounting", "installing", "running"].includes(containerStatus);
   const hasError = containerStatus === "error";
@@ -19,10 +21,19 @@ export function Preview() {
     setKey((k) => k + 1);
   };
 
+  const toggleFullscreen = () => {
+    setIsFullscreen((prev) => !prev);
+  };
+
+  const containerClasses = cn(
+    "flex flex-col bg-background",
+    isFullscreen ? "fixed inset-0 z-50" : "h-full"
+  );
+
   return (
-    <div className="h-full flex flex-col">
+    <div className={containerClasses}>
       {/* Header */}
-      <div className="h-10 px-4 flex items-center justify-between border-b border-border">
+      <div className="h-10 px-4 flex items-center justify-between border-b border-border shrink-0">
         <div className="flex items-center gap-2">
           <Monitor className="w-4 h-4 text-muted-foreground" />
           <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
@@ -41,19 +52,35 @@ export function Preview() {
                 size="icon"
                 className="h-7 w-7"
                 onClick={handleRefresh}
+                title="Refresh preview"
               >
                 <RefreshCw className="w-3.5 h-3.5" />
               </Button>
-              <a
-                href={previewUrl}
-                target="_blank"
-                rel="noopener noreferrer"
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                onClick={toggleFullscreen}
+                title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
               >
-                <Button variant="ghost" size="icon" className="h-7 w-7">
-                  <ExternalLink className="w-3.5 h-3.5" />
-                </Button>
-              </a>
+                {isFullscreen ? (
+                  <Minimize2 className="w-3.5 h-3.5" />
+                ) : (
+                  <Maximize2 className="w-3.5 h-3.5" />
+                )}
+              </Button>
             </>
+          )}
+          {isFullscreen && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={() => setIsFullscreen(false)}
+              title="Close"
+            >
+              <X className="w-3.5 h-3.5" />
+            </Button>
           )}
         </div>
       </div>

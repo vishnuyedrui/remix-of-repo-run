@@ -206,8 +206,9 @@ export async function fetchFileContent(
   owner: string,
   repo: string,
   path: string,
-  sha: string
-): Promise<string> {
+  sha: string,
+  options?: { asBinary?: boolean }
+): Promise<string | Uint8Array> {
   const response = await fetchWithAuth(
     `https://api.github.com/repos/${owner}/${repo}/git/blobs/${sha}`
   );
@@ -220,13 +221,25 @@ export async function fetchFileContent(
   
   // GitHub returns base64 encoded content
   if (data.encoding === "base64") {
-    return atob(data.content.replace(/\n/g, ""));
+    const base64Content = data.content.replace(/\n/g, "");
+    
+    if (options?.asBinary) {
+      // Convert base64 to Uint8Array for binary files
+      const binaryString = atob(base64Content);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      return bytes;
+    }
+    
+    return atob(base64Content);
   }
   
   return data.content;
 }
 
-// File extensions we want to include (code files)
+// File extensions we want to include in the editor (code files)
 const CODE_EXTENSIONS = new Set([
   "js", "jsx", "ts", "tsx", "mjs", "cjs",
   "json", "html", "css", "scss", "sass", "less",
@@ -241,12 +254,23 @@ const CODE_EXTENSIONS = new Set([
   "lock", "config",
 ]);
 
+// Binary asset extensions to include for runtime
+const ASSET_EXTENSIONS = new Set([
+  "png", "jpg", "jpeg", "gif", "webp", "avif", "ico", "bmp",
+  "woff", "woff2", "ttf", "otf", "eot",
+  "mp3", "wav", "ogg", "mp4", "webm",
+  "pdf",
+]);
+
 // Files to always include even without extension
 const ALWAYS_INCLUDE = new Set([
   "Dockerfile", "Makefile", "LICENSE", "README",
   ".gitignore", ".npmrc", ".nvmrc", ".env.example",
   "package.json", "tsconfig.json", "vite.config.ts",
 ]);
+
+// Max size for binary assets (5MB)
+const MAX_ASSET_SIZE = 5 * 1024 * 1024;
 
 function shouldIncludeFile(path: string): boolean {
   const fileName = path.split("/").pop() || "";
@@ -270,6 +294,36 @@ function shouldIncludeFile(path: string): boolean {
   }
   
   return false;
+}
+
+// Check if file should be included for runtime (includes assets)
+function shouldIncludeForRuntime(path: string, size?: number): boolean {
+  // First check if it's a code file
+  if (shouldIncludeFile(path)) {
+    return true;
+  }
+  
+  const fileName = path.split("/").pop() || "";
+  const ext = fileName.split(".").pop()?.toLowerCase() || "";
+  
+  // Check if it's an asset file
+  if (ASSET_EXTENSIONS.has(ext)) {
+    // Skip files that are too large
+    if (size && size > MAX_ASSET_SIZE) {
+      console.warn(`Skipping large asset (${(size / 1024 / 1024).toFixed(1)}MB): ${path}`);
+      return false;
+    }
+    return true;
+  }
+  
+  return false;
+}
+
+// Check if a file is a binary asset
+function isBinaryAsset(path: string): boolean {
+  const fileName = path.split("/").pop() || "";
+  const ext = fileName.split(".").pop()?.toLowerCase() || "";
+  return ASSET_EXTENSIONS.has(ext);
 }
 
 export function transformToNestedTree(files: GitHubFile[]): FileTreeNode[] {
@@ -341,8 +395,9 @@ export async function buildFileSystemTree(
 ): Promise<FileSystemTree> {
   const tree: Record<string, any> = {};
   
+  // Include both code files and binary assets for runtime
   const blobFiles = files.filter(
-    (f) => f.type === "blob" && shouldIncludeFile(f.path)
+    (f) => f.type === "blob" && shouldIncludeForRuntime(f.path, f.size)
   );
   
   let completed = 0;
@@ -356,7 +411,8 @@ export async function buildFileSystemTree(
     await Promise.all(
       batch.map(async (file) => {
         try {
-          const content = await fetchFileContent(owner, repo, file.path, file.sha);
+          const isBinary = isBinaryAsset(file.path);
+          const content = await fetchFileContent(owner, repo, file.path, file.sha, { asBinary: isBinary });
           
           const parts = file.path.split("/");
           let current: Record<string, any> = tree;
@@ -370,6 +426,7 @@ export async function buildFileSystemTree(
           }
           
           const fileName = parts[parts.length - 1];
+          // WebContainer expects Uint8Array for binary files
           current[fileName] = { file: { contents: content } };
           
           completed++;
@@ -385,4 +442,3 @@ export async function buildFileSystemTree(
   
   return tree as FileSystemTree;
 }
-
