@@ -1,8 +1,15 @@
 import { useState } from "react";
-import { Github, Rocket, Settings, Zap, Code2, Terminal as TerminalIcon } from "lucide-react";
+import { Github, Rocket, Settings, Zap, Code2, Terminal as TerminalIcon, Heart, CreditCard } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SettingsModal } from "./SettingsModal";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useWorkspaceStore } from "@/store/useWorkspaceStore";
 import {
   parseGitHubUrl,
@@ -16,6 +23,11 @@ import { runFullWorkflow } from "@/utils/webcontainer";
 export function LandingPage() {
   const [url, setUrl] = useState("");
   const [showSettings, setShowSettings] = useState(false);
+  const [showDonate, setShowDonate] = useState(false);
+
+  const handlePayment = () => {
+    window.open("https://rzp.io/rzp/bkbe8jK", "_blank");
+  };
   
   const {
     isLoadingRepo,
@@ -114,14 +126,24 @@ export function LandingPage() {
           </span>
         </div>
         
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => setShowSettings(true)}
-          className="glass-hover rounded-full"
-        >
-          <Settings className="w-5 h-5" />
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            onClick={() => setShowDonate(true)}
+            className="glass-hover rounded-full flex items-center gap-2"
+          >
+            <Heart className="w-4 h-4 text-red-500" />
+            <span className="hidden sm:inline">Donate</span>
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setShowSettings(true)}
+            className="glass-hover rounded-full"
+          >
+            <Settings className="w-5 h-5" />
+          </Button>
+        </div>
       </header>
 
       {/* Main content */}
@@ -226,6 +248,34 @@ export function LandingPage() {
 
       {/* Settings Modal */}
       <SettingsModal open={showSettings} onOpenChange={setShowSettings} />
+
+      {/* Donate Modal */}
+      <Dialog open={showDonate} onOpenChange={setShowDonate}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Heart className="w-5 h-5 text-red-500" />
+              Support InstantIDE
+            </DialogTitle>
+            <DialogDescription>
+              Help us keep InstantIDE free and improve it for everyone. Your support means a lot!
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 pt-4">
+            <p className="text-sm text-muted-foreground">
+              InstantIDE is a free tool that lets you run GitHub repositories directly in your browser. 
+              Your donations help cover hosting costs and enable us to add new features.
+            </p>
+            <Button 
+              onClick={handlePayment} 
+              className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
+            >
+              <CreditCard className="w-4 h-4 mr-2" />
+              Donate Now
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
