@@ -97,7 +97,9 @@ export function Preview() {
               {containerStatus === "running" && "Starting dev server..."}
             </p>
             <p className="text-xs text-muted-foreground mt-1">
-              This may take a moment
+              {containerStatus === "installing" || containerStatus === "running" 
+                ? "Check the terminal below for progress" 
+                : "This may take a moment"}
             </p>
           </div>
         )}
