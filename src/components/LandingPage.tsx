@@ -26,7 +26,7 @@ export function LandingPage() {
   const [showDonate, setShowDonate] = useState(false);
 
   const handlePayment = () => {
-    window.open("https://rzp.io/rzp/bkbe8jK", "_blank");
+    window.location.href = "https://rzp.io/rzp/bkbe8jK";
   };
   
   const {
