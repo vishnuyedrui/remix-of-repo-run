@@ -19,7 +19,7 @@ export interface GitHubTreeResponse {
 export interface ParsedGitHubUrl {
   owner: string;
   repo: string;
-  branch: string;
+  branch: string | null;
 }
 
 export interface FileTreeNode {
@@ -105,15 +105,15 @@ export function parseGitHubUrl(url: string): ParsedGitHubUrl | null {
       if (match) {
         const owner = match[1];
         const repo = match[2].replace(/\.git$/, "");
-        const branch = match[3] || "main";
+        const branch = match[3] || null; // Don't default to "main", let fetchRepoTree detect it
         
         // Validate owner and repo names
         if (!isValidGitHubName(owner) || !isValidGitHubName(repo)) {
           return null;
         }
         
-        // Validate branch name
-        if (!isValidBranchName(branch)) {
+        // Validate branch name if provided
+        if (branch && !isValidBranchName(branch)) {
           return null;
         }
         
@@ -168,20 +168,19 @@ export async function getDefaultBranch(owner: string, repo: string): Promise<str
 export async function fetchRepoTree(
   owner: string,
   repo: string,
-  branch: string
+  branch: string | null
 ): Promise<GitHubFile[]> {
-  // First, try with the provided branch
-  let response = await fetchWithAuth(
-    `https://api.github.com/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`
-  );
-  
-  // If branch not found, try getting the default branch
-  if (response.status === 404) {
-    const defaultBranch = await getDefaultBranch(owner, repo);
-    response = await fetchWithAuth(
-      `https://api.github.com/repos/${owner}/${repo}/git/trees/${defaultBranch}?recursive=1`
-    );
+  // If no branch specified, fetch the default branch first to avoid 404 errors
+  let targetBranch = branch;
+  if (!targetBranch) {
+    console.log(`No branch specified, fetching default branch for ${owner}/${repo}...`);
+    targetBranch = await getDefaultBranch(owner, repo);
+    console.log(`Default branch detected: ${targetBranch}`);
   }
+  
+  const response = await fetchWithAuth(
+    `https://api.github.com/repos/${owner}/${repo}/git/trees/${targetBranch}?recursive=1`
+  );
   
   if (!response.ok) {
     if (response.status === 403) {
@@ -189,6 +188,9 @@ export async function fetchRepoTree(
       if (rateLimitRemaining === "0") {
         throw new Error("GitHub API rate limit exceeded. Add a Personal Access Token in Settings to increase your limit.");
       }
+    }
+    if (response.status === 404) {
+      throw new Error(`Branch "${targetBranch}" not found. Please check the repository URL.`);
     }
     throw new Error(`Failed to fetch repository tree: ${response.statusText}`);
   }
@@ -412,6 +414,9 @@ export async function buildFileSystemTree(
       batch.map(async (file) => {
         try {
           const isBinary = isBinaryAsset(file.path);
+          if (isBinary) {
+            console.log(`📦 Downloading binary asset: ${file.path}`);
+          }
           const content = await fetchFileContent(owner, repo, file.path, file.sha, { asBinary: isBinary });
           
           const parts = file.path.split("/");
@@ -429,10 +434,14 @@ export async function buildFileSystemTree(
           // WebContainer expects Uint8Array for binary files
           current[fileName] = { file: { contents: content } };
           
+          if (isBinary) {
+            console.log(`✅ Binary asset mounted: ${file.path}`);
+          }
+          
           completed++;
           onProgress?.(completed, total, file.path);
         } catch (error) {
-          console.error(`Failed to fetch ${file.path}:`, error);
+          console.error(`❌ Failed to fetch ${file.path}:`, error);
           completed++;
           onProgress?.(completed, total, file.path);
         }
