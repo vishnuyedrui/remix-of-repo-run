@@ -216,6 +216,37 @@ export async function startDevServer(
   }
 }
 
+// Find the best directory to serve for static sites
+async function findStaticRoot(container: WebContainer): Promise<string> {
+  const possibleRoots = ["public", "dist", "build", "docs", "www", "static", "."];
+  
+  for (const dir of possibleRoots) {
+    try {
+      if (dir === ".") {
+        // Check if root has index.html
+        const result = await container.spawn("test", ["-f", "index.html"]);
+        if (await result.exit === 0) {
+          return ".";
+        }
+      } else {
+        // Check if directory exists and has index.html
+        const dirResult = await container.spawn("test", ["-d", dir]);
+        if (await dirResult.exit === 0) {
+          const indexResult = await container.spawn("test", ["-f", `${dir}/index.html`]);
+          if (await indexResult.exit === 0) {
+            return dir;
+          }
+        }
+      }
+    } catch {
+      continue;
+    }
+  }
+  
+  // Fallback to root directory
+  return ".";
+}
+
 // Serve static files using a simple server
 async function serveStaticSite(
   container: WebContainer,
@@ -224,9 +255,16 @@ async function serveStaticSite(
   const { onStatusChange, onOutput, onServerReady, onError } = callbacks;
 
   try {
+    // Find the best root directory
+    const staticRoot = await findStaticRoot(container);
+    
     // Create a minimal package.json for serve
     onStatusChange?.("installing");
     onOutput?.("\x1b[36m➜ Setting up static file server...\x1b[0m\n\n");
+    
+    if (staticRoot !== ".") {
+      onOutput?.(`\x1b[33m  Serving from: ${staticRoot}/\x1b[0m\n\n`);
+    }
 
     await container.fs.writeFile(
       "package.json",
@@ -235,7 +273,7 @@ async function serveStaticSite(
           name: "static-server",
           type: "module",
           scripts: {
-            start: "npx http-server . -p 3000 -c-1 --no-icons",
+            start: `npx http-server ${staticRoot} -p 3000 -c-1 --cors`,
           },
         },
         null,
