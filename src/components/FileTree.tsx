@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, memo } from "react";
 import {
   ChevronRight,
   ChevronDown,
@@ -8,7 +8,6 @@ import {
   FileJson,
   FileCode,
   FileText,
-  FileType,
   Settings,
 } from "lucide-react";
 import { useWorkspaceStore } from "@/store/useWorkspaceStore";
@@ -41,7 +40,7 @@ interface TreeNodeProps {
   depth: number;
 }
 
-function TreeNode({ node, depth }: TreeNodeProps) {
+const TreeNode = memo(function TreeNode({ node, depth }: TreeNodeProps) {
   const expandedFolders = useWorkspaceStore((s) => s.expandedFolders);
   const toggleFolder = useWorkspaceStore((s) => s.toggleFolder);
   const selectedFile = useWorkspaceStore((s) => s.selectedFile);
@@ -133,10 +132,10 @@ function TreeNode({ node, depth }: TreeNodeProps) {
       )}
     </div>
   );
-}
+});
 
-export function FileTree() {
-  const { fileTree } = useWorkspaceStore();
+export const FileTree = memo(function FileTree() {
+  const fileTree = useWorkspaceStore((s) => s.fileTree);
 
   return (
     <div className="h-full flex flex-col">
@@ -155,4 +154,4 @@ export function FileTree() {
       </ScrollArea>
     </div>
   );
-}
+});
