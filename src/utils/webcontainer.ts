@@ -298,7 +298,137 @@ async function findStaticRoot(container: WebContainer): Promise<string> {
   return ".";
 }
 
-// Serve static files using a simple server
+// Generate an express-based static server with full MIME type support
+function generateStaticServerScript(staticDirs: string[]): string {
+  return `
+const express = require('express');
+const path = require('path');
+const fs = require('fs');
+
+const app = express();
+const PORT = 3000;
+
+// Comprehensive MIME type mappings for all common file types
+const mimeTypes = {
+  // Images
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.bmp': 'image/bmp',
+  '.tiff': 'image/tiff',
+  '.avif': 'image/avif',
+  // Fonts
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf',
+  '.otf': 'font/otf',
+  '.eot': 'application/vnd.ms-fontobject',
+  // Web
+  '.html': 'text/html',
+  '.css': 'text/css',
+  '.js': 'application/javascript',
+  '.mjs': 'application/javascript',
+  '.json': 'application/json',
+  '.xml': 'application/xml',
+  // Media
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+  '.ogg': 'audio/ogg',
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+  '.ogv': 'video/ogg',
+  // Documents
+  '.pdf': 'application/pdf',
+  '.txt': 'text/plain',
+  '.md': 'text/markdown',
+  // Data
+  '.csv': 'text/csv',
+  '.yaml': 'text/yaml',
+  '.yml': 'text/yaml',
+};
+
+// Custom middleware to set correct MIME types
+app.use((req, res, next) => {
+  const ext = path.extname(req.path).toLowerCase();
+  if (mimeTypes[ext]) {
+    res.type(mimeTypes[ext]);
+  }
+  next();
+});
+
+// Enable CORS for all requests
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+  next();
+});
+
+// Serve static files from multiple directories with proper options
+const staticOptions = {
+  dotfiles: 'allow',
+  etag: false,
+  extensions: ['html', 'htm'],
+  index: ['index.html', 'index.htm'],
+  maxAge: 0,
+  redirect: true,
+  setHeaders: (res, filePath) => {
+    const ext = path.extname(filePath).toLowerCase();
+    if (mimeTypes[ext]) {
+      res.set('Content-Type', mimeTypes[ext]);
+    }
+    // Disable caching for development
+    res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+  }
+};
+
+// Serve from each directory
+const dirs = ${JSON.stringify(staticDirs)};
+dirs.forEach(dir => {
+  if (fs.existsSync(dir)) {
+    console.log('Serving static files from:', dir);
+    app.use(express.static(dir, staticOptions));
+  }
+});
+
+// SPA fallback - serve index.html for any unmatched routes
+app.use((req, res, next) => {
+  // Only handle GET requests for HTML pages (not API calls or assets)
+  if (req.method !== 'GET') return next();
+  
+  const ext = path.extname(req.path);
+  // If there's an extension, it's likely an asset that wasn't found
+  if (ext && ext !== '.html') {
+    return res.status(404).send('Not found');
+  }
+  
+  // Try to serve index.html from the first available directory
+  for (const dir of dirs) {
+    const indexPath = path.join(dir, 'index.html');
+    if (fs.existsSync(indexPath)) {
+      return res.sendFile(path.resolve(indexPath));
+    }
+  }
+  next();
+});
+
+// 404 handler
+app.use((req, res) => {
+  res.status(404).send('Not found: ' + req.path);
+});
+
+app.listen(PORT, () => {
+  console.log('Static server available on http://localhost:' + PORT);
+  console.log('Available on:');
+  console.log('  http://localhost:' + PORT);
+});
+`;
+}
+
+// Serve static files using express for proper MIME type handling
 async function serveStaticSite(
   container: WebContainer,
   callbacks: ContainerCallbacks
@@ -318,25 +448,44 @@ async function serveStaticSite(
   };
 
   try {
-    // Find the best root directory
+    // Find all potential static directories
+    const possibleDirs = [".", "public", "dist", "build", "static", "assets", "www", "docs"];
+    const existingDirs: string[] = [];
+    
+    for (const dir of possibleDirs) {
+      try {
+        const result = await container.spawn("test", ["-d", dir]);
+        if (await result.exit === 0) {
+          existingDirs.push(dir);
+        }
+      } catch {
+        continue;
+      }
+    }
+    
+    // Find the primary root (with index.html)
     const staticRoot = await findStaticRoot(container);
     
-    // Create a minimal package.json for serve
-    onStatusChange?.("installing");
-    onOutput?.("\x1b[36m➜ Setting up static file server...\x1b[0m\n\n");
+    // Build ordered list: primary root first, then others
+    const orderedDirs = [staticRoot, ...existingDirs.filter(d => d !== staticRoot)];
+    const uniqueDirs = [...new Set(orderedDirs)];
     
-    if (staticRoot !== ".") {
-      onOutput?.(`\x1b[33m  Serving from: ${staticRoot}/\x1b[0m\n\n`);
-    }
+    onStatusChange?.("installing");
+    onOutput?.("\x1b[36m➜ Setting up enhanced static file server...\x1b[0m\n\n");
+    onOutput?.(`\x1b[33m  Serving from: ${uniqueDirs.join(", ")}\x1b[0m\n\n`);
 
+    // Create package.json with express
     await container.fs.writeFile(
       "package.json",
       JSON.stringify(
         {
           name: "static-server",
-          type: "module",
+          type: "commonjs",
           scripts: {
-            start: `npx http-server ${staticRoot} -p 3000 -c-1 --cors`,
+            start: "node server.js",
+          },
+          dependencies: {
+            express: "^4.18.2",
           },
         },
         null,
@@ -344,25 +493,28 @@ async function serveStaticSite(
       )
     );
 
-    // Install http-server
+    // Create the server script with proper MIME handling
+    await container.fs.writeFile("server.js", generateStaticServerScript(uniqueDirs));
+
+    // Install express
     const installExitCode = await runCommand(
       container,
       "npm",
-      ["install", "http-server"],
+      ["install"],
       onOutput
     );
 
     if (installExitCode !== 0) {
-      onError?.("Failed to install static server.");
+      onError?.("Failed to install static server dependencies.");
       onStatusChange?.("error");
       return;
     }
 
-    onOutput?.("\n\x1b[32m✓ Static server ready!\x1b[0m\n\n");
+    onOutput?.("\n\x1b[32m✓ Static server configured!\x1b[0m\n\n");
 
     // Start server
     onStatusChange?.("running");
-    onOutput?.("\x1b[36m➜ Starting static file server...\x1b[0m\n\n");
+    onOutput?.("\x1b[36m➜ Starting static file server with full MIME support...\x1b[0m\n\n");
 
     const serverProcess = await container.spawn("npm", ["run", "start"]);
 
@@ -371,8 +523,8 @@ async function serveStaticSite(
         write(data) {
           onOutput?.(data);
           
-          // Fallback detection for http-server
-          if (!serverReadyFired && /available on/i.test(data)) {
+          // Detect server ready from output
+          if (!serverReadyFired && /available on|listening/i.test(data)) {
             setTimeout(() => {
               if (!serverReadyFired) {
                 handleServerReady("http://localhost:3000", 3000);
