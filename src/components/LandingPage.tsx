@@ -1,4 +1,4 @@
-import { useState, memo } from "react";
+import { useState, useEffect, memo } from "react";
 import { Github, Rocket, Settings, Zap, Code2, Terminal as TerminalIcon, Heart, CreditCard } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,10 +20,25 @@ import {
 import { detectProjectType } from "@/utils/projectDetection";
 import { runFullWorkflow } from "@/utils/webcontainer";
 
+const DONATE_POPUP_SHOWN_KEY = "instantide_donate_popup_shown";
+
 export function LandingPage() {
   const [url, setUrl] = useState("");
   const [showSettings, setShowSettings] = useState(false);
   const [showDonate, setShowDonate] = useState(false);
+
+  // Show donate popup once per visitor
+  useEffect(() => {
+    const hasShown = localStorage.getItem(DONATE_POPUP_SHOWN_KEY);
+    if (!hasShown) {
+      // Small delay to let the page load first
+      const timer = setTimeout(() => {
+        setShowDonate(true);
+        localStorage.setItem(DONATE_POPUP_SHOWN_KEY, "true");
+      }, 1500);
+      return () => clearTimeout(timer);
+    }
+  }, []);
 
   const handlePayment = () => {
     window.location.href = "https://rzp.io/rzp/bkbe8jK";
