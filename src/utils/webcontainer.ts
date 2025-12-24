@@ -234,15 +234,38 @@ export async function startDevServer(
   
   let serverReadyFired = false;
   let serverReadyTimeout: ReturnType<typeof setTimeout> | null = null;
+  let portReadyTimeout: ReturnType<typeof setTimeout> | null = null;
   
   const handleServerReady = (url: string, port?: number) => {
     if (serverReadyFired) return;
     serverReadyFired = true;
     if (serverReadyTimeout) clearTimeout(serverReadyTimeout);
-    onOutput?.(`\n\x1b[32m✓ Server ready${port ? ` on port ${port}` : ''}\x1b[0m\n`);
+    if (portReadyTimeout) clearTimeout(portReadyTimeout);
+    onOutput?.(`\n\x1b[32m✓ Server ready at ${url}${port ? ` (port ${port})` : ''}\x1b[0m\n`);
     onServerReady?.(url);
     onStatusChange?.("ready");
   };
+  
+  // Register WebContainer port/server-ready listeners BEFORE starting the server
+  // This is the PRIMARY and ONLY reliable way to get a valid preview URL
+  const unsubscribeServerReady = container.on("server-ready", (port, url) => {
+    onOutput?.(`\n\x1b[36mℹ WebContainer server-ready event: port=${port}, url=${url}\x1b[0m\n`);
+    handleServerReady(url, port);
+  });
+  
+  // Also listen for port events as backup
+  const unsubscribePort = container.on("port", (port, type, url) => {
+    if (type === "open" && url) {
+      onOutput?.(`\n\x1b[36mℹ WebContainer port event: port=${port}, type=${type}, url=${url}\x1b[0m\n`);
+      // Give server-ready event priority, wait a bit before using port event
+      if (portReadyTimeout) clearTimeout(portReadyTimeout);
+      portReadyTimeout = setTimeout(() => {
+        if (!serverReadyFired) {
+          handleServerReady(url, port);
+        }
+      }, 2000);
+    }
+  });
   
   try {
     // Read package.json for framework detection and debugging
@@ -309,84 +332,46 @@ export async function startDevServer(
       onOutput?.(`\x1b[36m➜ Running npm run ${devScript}...\x1b[0m\n\n`);
     }
     
-    const serverProcess = await container.spawn("npm", npmArgs);
+    // Spawn with HOST=0.0.0.0 env var to ensure server binds to all interfaces
+    const serverProcess = await container.spawn("npm", npmArgs, {
+      env: {
+        HOST: "0.0.0.0",
+        // Some frameworks use HOSTNAME
+        HOSTNAME: "0.0.0.0",
+      },
+    });
     
-    // Comprehensive patterns that indicate the server is ready
-    const readyPatterns = [
-      // URL patterns
-      /localhost:(\d+)/i,
-      /127\.0\.0\.1:(\d+)/i,
-      /0\.0\.0\.0:(\d+)/i,
-      // Generic patterns
-      /listening on (?:port )?(\d+)/i,
-      /server (?:is )?(?:running|started|ready)/i,
-      /ready in \d+/i,
-      // Vite specific
-      /VITE\s+v[\d.]+\s+ready/i,
-      /➜\s+Local:/i,
-      /Local:\s+http/i,
-      // Next.js specific
-      /ready\s+started\s+server/i,
-      /Ready in/i,
-      // CRA / Webpack specific
-      /Compiled successfully/i,
-      /webpack compiled/i,
-      /You can now view/i,
-      // Vue CLI specific
-      /App running at/i,
-      // Angular specific
-      /Angular Live Development Server/i,
-      // Astro specific
-      /astro\s+v[\d.]+\s+started/i,
-      // Express/Node specific
-      /Server listening/i,
-      /Express server/i,
-    ];
-    
+    // Log output for debugging - but DO NOT use output to set preview URL
+    // The only valid preview URL comes from WebContainer events (server-ready/port)
     serverProcess.output.pipeTo(
       new WritableStream({
         write(data) {
           onOutput?.(data);
-          
-          // Fallback: detect server ready from output patterns
-          if (!serverReadyFired) {
-            for (const pattern of readyPatterns) {
-              if (pattern.test(data)) {
-                // Extract port if present
-                const portMatch = data.match(/(?:localhost|127\.0\.0\.1|0\.0\.0\.0):(\d+)/i);
-                const port = portMatch ? parseInt(portMatch[1], 10) : 3000;
-                // Give the actual server-ready event a moment to fire
-                setTimeout(() => {
-                  if (!serverReadyFired) {
-                    onOutput?.("\n\x1b[33m⚠ Detected server ready from output (fallback)\x1b[0m\n");
-                    handleServerReady(`http://localhost:${port}`, port);
-                  }
-                }, 1500);
-                break;
-              }
-            }
-          }
         },
       })
     );
     
-    // Listen for server ready event (primary detection method)
-    container.on("server-ready", (port, url) => {
-      handleServerReady(url, port);
-    });
-    
     // Set a timeout - if server-ready hasn't fired in 90 seconds, show helpful message
     serverReadyTimeout = setTimeout(() => {
       if (!serverReadyFired) {
-        onOutput?.("\n\x1b[33m⚠ Server is taking longer than expected...\x1b[0m\n");
-        onOutput?.("\x1b[33m  Check the terminal output above for errors.\x1b[0m\n");
-        onOutput?.("\x1b[33m  Some projects may need additional configuration.\x1b[0m\n");
+        onOutput?.("\n\x1b[33m════════════════════════════════════════════════════════\x1b[0m\n");
+        onOutput?.("\x1b[33m⚠ Server process is running but no port was detected.\x1b[0m\n\n");
+        onOutput?.("\x1b[33mPossible causes:\x1b[0m\n");
+        onOutput?.("\x1b[33m  1. Server binds to localhost only (needs 0.0.0.0)\x1b[0m\n");
+        onOutput?.("\x1b[33m  2. Server failed to start (check errors above)\x1b[0m\n");
+        onOutput?.("\x1b[33m  3. Missing dependencies or configuration\x1b[0m\n\n");
+        onOutput?.("\x1b[33mTo fix binding issues, ensure server listens on:\x1b[0m\n");
+        onOutput?.("\x1b[33m  - Vite: vite --host 0.0.0.0\x1b[0m\n");
+        onOutput?.("\x1b[33m  - Express: app.listen(port, '0.0.0.0')\x1b[0m\n");
+        onOutput?.("\x1b[33m  - Next.js: should work automatically\x1b[0m\n");
+        onOutput?.("\x1b[33m════════════════════════════════════════════════════════\x1b[0m\n");
       }
     }, 90000);
     
     // Handle server exit
     serverProcess.exit.then((code) => {
       if (serverReadyTimeout) clearTimeout(serverReadyTimeout);
+      if (portReadyTimeout) clearTimeout(portReadyTimeout);
       if (code !== 0 && !serverReadyFired) {
         onError?.(`Dev server exited with code ${code}. Check terminal for details.`);
         onStatusChange?.("error");
@@ -395,6 +380,7 @@ export async function startDevServer(
     
   } catch (error) {
     if (serverReadyTimeout) clearTimeout(serverReadyTimeout);
+    if (portReadyTimeout) clearTimeout(portReadyTimeout);
     const message = error instanceof Error ? error.message : "Unknown error occurred";
     onError?.(message);
     onStatusChange?.("error");
