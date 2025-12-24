@@ -447,8 +447,8 @@ export async function buildFileSystemTree(
   let completed = 0;
   const total = blobFiles.length;
   
-  // Fetch files in parallel batches
-  const batchSize = 10;
+  // Fetch files in parallel batches (increased from 10 to 20 for faster loading)
+  const batchSize = 20;
   for (let i = 0; i < blobFiles.length; i += batchSize) {
     const batch = blobFiles.slice(i, i + batchSize);
     

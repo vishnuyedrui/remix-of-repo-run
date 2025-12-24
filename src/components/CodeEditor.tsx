@@ -1,3 +1,4 @@
+import { memo } from "react";
 import Editor from "@monaco-editor/react";
 import { useWorkspaceStore } from "@/store/useWorkspaceStore";
 import { FileCode, Loader2 } from "lucide-react";
@@ -56,8 +57,10 @@ function getLanguage(fileName: string): string {
   return LANGUAGE_MAP[ext] || "plaintext";
 }
 
-export function CodeEditor() {
-  const { selectedFile, fileContent, isLoadingFile } = useWorkspaceStore();
+export const CodeEditor = memo(function CodeEditor() {
+  const selectedFile = useWorkspaceStore((s) => s.selectedFile);
+  const fileContent = useWorkspaceStore((s) => s.fileContent);
+  const isLoadingFile = useWorkspaceStore((s) => s.isLoadingFile);
 
   if (!selectedFile) {
     return (
@@ -137,4 +140,4 @@ export function CodeEditor() {
       </div>
     </div>
   );
-}
+});

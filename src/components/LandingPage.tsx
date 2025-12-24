@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, memo } from "react";
 import { Github, Rocket, Settings, Zap, Code2, Terminal as TerminalIcon, Heart, CreditCard } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,23 +29,22 @@ export function LandingPage() {
     window.location.href = "https://rzp.io/rzp/bkbe8jK";
   };
   
-  const {
-    isLoadingRepo,
-    loadingProgress,
-    error,
-    setRepoInfo,
-    setProjectInfo,
-    setFileTree,
-    setFileSystemTree,
-    setIsLoadingRepo,
-    setLoadingProgress,
-    setError,
-    setView,
-    setContainerStatus,
-    appendTerminalOutput,
-    clearTerminalOutput,
-    setPreviewUrl,
-  } = useWorkspaceStore();
+  // Use atomic selectors for better performance
+  const isLoadingRepo = useWorkspaceStore((s) => s.isLoadingRepo);
+  const loadingProgress = useWorkspaceStore((s) => s.loadingProgress);
+  const error = useWorkspaceStore((s) => s.error);
+  const setRepoInfo = useWorkspaceStore((s) => s.setRepoInfo);
+  const setProjectInfo = useWorkspaceStore((s) => s.setProjectInfo);
+  const setFileTree = useWorkspaceStore((s) => s.setFileTree);
+  const setFileSystemTree = useWorkspaceStore((s) => s.setFileSystemTree);
+  const setIsLoadingRepo = useWorkspaceStore((s) => s.setIsLoadingRepo);
+  const setLoadingProgress = useWorkspaceStore((s) => s.setLoadingProgress);
+  const setError = useWorkspaceStore((s) => s.setError);
+  const setView = useWorkspaceStore((s) => s.setView);
+  const setContainerStatus = useWorkspaceStore((s) => s.setContainerStatus);
+  const appendTerminalOutput = useWorkspaceStore((s) => s.appendTerminalOutput);
+  const clearTerminalOutput = useWorkspaceStore((s) => s.clearTerminalOutput);
+  const setPreviewUrl = useWorkspaceStore((s) => s.setPreviewUrl);
 
   const handleLaunch = async () => {
     if (!url.trim()) {
@@ -288,7 +287,7 @@ export function LandingPage() {
   );
 }
 
-function FeatureCard({
+const FeatureCard = memo(function FeatureCard({
   icon,
   title,
   description,
@@ -304,4 +303,4 @@ function FeatureCard({
       <p className="text-sm text-muted-foreground">{description}</p>
     </div>
   );
-}
+});
