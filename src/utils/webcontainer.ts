@@ -4,16 +4,6 @@ import type { ProjectType } from "./projectDetection";
 let webcontainerInstance: WebContainer | null = null;
 let bootPromise: Promise<WebContainer> | null = null;
 
-// Framework detection for proper configuration
-type FrameworkType = 'vite' | 'next' | 'cra' | 'angular' | 'vue-cli' | 'nuxt' | 'remix' | 'astro' | 'express' | 'unknown';
-
-interface PackageJsonInfo {
-  scripts: Record<string, string>;
-  dependencies: Record<string, string>;
-  devDependencies: Record<string, string>;
-  framework: FrameworkType;
-}
-
 // Check if WebContainers are supported in this environment
 export function checkWebContainerSupport(): { supported: boolean; reason?: string } {
   // Check for SharedArrayBuffer (required for WebContainers)
@@ -121,8 +111,8 @@ export async function runCommand(
   return process.exit;
 }
 
-// Read and parse package.json with framework detection
-async function readPackageJson(container: WebContainer): Promise<PackageJsonInfo | null> {
+async function findDevScript(container: WebContainer): Promise<string | null> {
+  // Try to read package.json to find the right script
   try {
     const packageJsonProcess = await container.spawn("cat", ["package.json"]);
     let packageJsonContent = "";
@@ -140,90 +130,19 @@ async function readPackageJson(container: WebContainer): Promise<PackageJsonInfo
     
     const packageJson = JSON.parse(packageJsonContent);
     const scripts = packageJson.scripts || {};
-    const dependencies = packageJson.dependencies || {};
-    const devDependencies = packageJson.devDependencies || {};
-    const allDeps = { ...dependencies, ...devDependencies };
     
-    // Detect framework
-    let framework: FrameworkType = 'unknown';
-    if (allDeps['vite'] || allDeps['@vitejs/plugin-react'] || allDeps['@vitejs/plugin-vue']) {
-      framework = 'vite';
-    } else if (allDeps['next']) {
-      framework = 'next';
-    } else if (allDeps['react-scripts']) {
-      framework = 'cra';
-    } else if (allDeps['@angular/core'] || allDeps['@angular/cli']) {
-      framework = 'angular';
-    } else if (allDeps['@vue/cli-service']) {
-      framework = 'vue-cli';
-    } else if (allDeps['nuxt'] || allDeps['nuxt3']) {
-      framework = 'nuxt';
-    } else if (allDeps['@remix-run/react']) {
-      framework = 'remix';
-    } else if (allDeps['astro']) {
-      framework = 'astro';
-    } else if (allDeps['express'] || allDeps['koa'] || allDeps['fastify']) {
-      framework = 'express';
+    // Check for common dev script names in order of preference
+    const devScripts = ["dev", "start", "serve", "develop", "watch"];
+    for (const script of devScripts) {
+      if (scripts[script]) {
+        return script;
+      }
     }
     
-    return { scripts, dependencies, devDependencies, framework };
+    return null;
   } catch {
     return null;
   }
-}
-
-// Find the best dev script based on framework and available scripts
-async function findDevScript(container: WebContainer): Promise<{ script: string; needsHostFlag: boolean; buildFirst: boolean } | null> {
-  const pkgInfo = await readPackageJson(container);
-  if (!pkgInfo) return null;
-  
-  const { scripts, framework } = pkgInfo;
-  
-  // Framework-specific preferences
-  const frameworkScriptPriority: Record<FrameworkType, string[]> = {
-    'vite': ['dev', 'start', 'serve', 'preview'],
-    'next': ['dev', 'start'],
-    'cra': ['start'],
-    'angular': ['start', 'serve'],
-    'vue-cli': ['serve', 'dev', 'start'],
-    'nuxt': ['dev', 'start'],
-    'remix': ['dev', 'start'],
-    'astro': ['dev', 'start', 'preview'],
-    'express': ['start', 'dev', 'serve', 'start:dev'],
-    'unknown': ['dev', 'start', 'serve', 'develop', 'watch', 'start:dev', 'preview'],
-  };
-  
-  // Check if this framework needs --host flag for WebContainer
-  const needsHostFlag = ['vite', 'astro'].includes(framework);
-  
-  // Check if we need to build first (e.g., only preview script available)
-  let buildFirst = false;
-  const scriptPriority = frameworkScriptPriority[framework];
-  
-  for (const scriptName of scriptPriority) {
-    if (scripts[scriptName]) {
-      // Special case: if only 'preview' is available, we need to build first
-      if (scriptName === 'preview' && scripts['build']) {
-        buildFirst = true;
-      }
-      return { script: scriptName, needsHostFlag, buildFirst };
-    }
-  }
-  
-  // Fallback: check for build + preview combo
-  if (scripts['build'] && scripts['preview']) {
-    return { script: 'preview', needsHostFlag, buildFirst: true };
-  }
-  
-  // Last resort: any script that might start a server
-  for (const [name, cmd] of Object.entries(scripts)) {
-    const cmdStr = String(cmd);
-    if (cmdStr.includes('node') || cmdStr.includes('nodemon') || cmdStr.includes('ts-node')) {
-      return { script: name, needsHostFlag: false, buildFirst: false };
-    }
-  }
-  
-  return null;
 }
 
 export async function startDevServer(
@@ -234,47 +153,17 @@ export async function startDevServer(
   
   let serverReadyFired = false;
   let serverReadyTimeout: ReturnType<typeof setTimeout> | null = null;
-  let portReadyTimeout: ReturnType<typeof setTimeout> | null = null;
   
   const handleServerReady = (url: string, port?: number) => {
     if (serverReadyFired) return;
     serverReadyFired = true;
     if (serverReadyTimeout) clearTimeout(serverReadyTimeout);
-    if (portReadyTimeout) clearTimeout(portReadyTimeout);
-    onOutput?.(`\n\x1b[32m✓ Server ready at ${url}${port ? ` (port ${port})` : ''}\x1b[0m\n`);
+    onOutput?.(`\n\x1b[32m✓ Server ready${port ? ` on port ${port}` : ''}\x1b[0m\n`);
     onServerReady?.(url);
     onStatusChange?.("ready");
   };
   
-  // Register WebContainer port/server-ready listeners BEFORE starting the server
-  // This is the PRIMARY and ONLY reliable way to get a valid preview URL
-  const unsubscribeServerReady = container.on("server-ready", (port, url) => {
-    onOutput?.(`\n\x1b[36mℹ WebContainer server-ready event: port=${port}, url=${url}\x1b[0m\n`);
-    handleServerReady(url, port);
-  });
-  
-  // Also listen for port events as backup
-  const unsubscribePort = container.on("port", (port, type, url) => {
-    if (type === "open" && url) {
-      onOutput?.(`\n\x1b[36mℹ WebContainer port event: port=${port}, type=${type}, url=${url}\x1b[0m\n`);
-      // Give server-ready event priority, wait a bit before using port event
-      if (portReadyTimeout) clearTimeout(portReadyTimeout);
-      portReadyTimeout = setTimeout(() => {
-        if (!serverReadyFired) {
-          handleServerReady(url, port);
-        }
-      }, 2000);
-    }
-  });
-  
   try {
-    // Read package.json for framework detection and debugging
-    const pkgInfo = await readPackageJson(container);
-    if (pkgInfo) {
-      onOutput?.(`\x1b[33m  Framework detected: ${pkgInfo.framework}\x1b[0m\n`);
-      onOutput?.(`\x1b[33m  Available scripts: ${Object.keys(pkgInfo.scripts).join(', ')}\x1b[0m\n\n`);
-    }
-    
     // Install dependencies
     onStatusChange?.("installing");
     onOutput?.("\x1b[36m➜ Running npm install...\x1b[0m\n\n");
@@ -294,84 +183,76 @@ export async function startDevServer(
     
     onOutput?.("\n\x1b[32m✓ Dependencies installed successfully!\x1b[0m\n\n");
     
-    // Find the right dev script with framework-aware configuration
-    const devScriptInfo = await findDevScript(container);
+    // Find the right dev script
+    const devScript = await findDevScript(container);
     
-    if (!devScriptInfo) {
+    if (!devScript) {
       onError?.("No dev/start script found in package.json. The project needs a 'dev', 'start', or 'serve' script.");
       onStatusChange?.("error");
       return;
     }
     
-    const { script: devScript, needsHostFlag, buildFirst } = devScriptInfo;
-    
-    // Run build first if needed (e.g., for preview-only projects)
-    if (buildFirst) {
-      onOutput?.("\x1b[36m➜ Building project first...\x1b[0m\n\n");
-      const buildExitCode = await runCommand(container, "npm", ["run", "build"], onOutput);
-      if (buildExitCode !== 0) {
-        onError?.("Build failed. Check the terminal output for details.");
-        onStatusChange?.("error");
-        return;
-      }
-      onOutput?.("\n\x1b[32m✓ Build completed!\x1b[0m\n\n");
-    }
-    
     // Start dev server
     onStatusChange?.("running");
+    onOutput?.(`\x1b[36m➜ Running npm run ${devScript}...\x1b[0m\n\n`);
     
-    // Build command args based on framework needs
-    let npmArgs: string[];
-    if (needsHostFlag) {
-      // For Vite and similar frameworks that need --host for WebContainer binding
-      npmArgs = ["run", devScript, "--", "--host", "0.0.0.0"];
-      onOutput?.(`\x1b[36m➜ Running npm run ${devScript} -- --host 0.0.0.0\x1b[0m\n`);
-      onOutput?.(`\x1b[33m  (Added --host flag for WebContainer compatibility)\x1b[0m\n\n`);
-    } else {
-      npmArgs = ["run", devScript];
-      onOutput?.(`\x1b[36m➜ Running npm run ${devScript}...\x1b[0m\n\n`);
-    }
+    const serverProcess = await container.spawn("npm", ["run", devScript]);
     
-    // Spawn with HOST=0.0.0.0 env var to ensure server binds to all interfaces
-    const serverProcess = await container.spawn("npm", npmArgs, {
-      env: {
-        HOST: "0.0.0.0",
-        // Some frameworks use HOSTNAME
-        HOSTNAME: "0.0.0.0",
-      },
-    });
+    // Patterns that indicate the server is ready (fallback detection)
+    const readyPatterns = [
+      /localhost:(\d+)/i,
+      /127\.0\.0\.1:(\d+)/i,
+      /listening on (?:port )?(\d+)/i,
+      /server (?:is )?(?:running|started|ready)/i,
+      /ready in \d+/i,
+      /local:\s+http/i,
+      /➜\s+local/i,
+    ];
     
-    // Log output for debugging - but DO NOT use output to set preview URL
-    // The only valid preview URL comes from WebContainer events (server-ready/port)
     serverProcess.output.pipeTo(
       new WritableStream({
         write(data) {
           onOutput?.(data);
+          
+          // Fallback: detect server ready from output patterns
+          if (!serverReadyFired) {
+            for (const pattern of readyPatterns) {
+              if (pattern.test(data)) {
+                // Extract port if present, construct a fallback URL
+                const portMatch = data.match(/(?:localhost|127\.0\.0\.1):(\d+)/i);
+                const port = portMatch ? parseInt(portMatch[1], 10) : 3000;
+                // Give the actual server-ready event a moment to fire
+                setTimeout(() => {
+                  if (!serverReadyFired) {
+                    onOutput?.("\n\x1b[33m⚠ Detected server ready from output (fallback)\x1b[0m\n");
+                    handleServerReady(`http://localhost:${port}`, port);
+                  }
+                }, 1000);
+                break;
+              }
+            }
+          }
         },
       })
     );
     
-    // Set a timeout - if server-ready hasn't fired in 90 seconds, show helpful message
+    // Listen for server ready event
+    container.on("server-ready", (port, url) => {
+      handleServerReady(url, port);
+    });
+    
+    // Set a timeout - if server-ready hasn't fired in 60 seconds, show helpful message
     serverReadyTimeout = setTimeout(() => {
       if (!serverReadyFired) {
-        onOutput?.("\n\x1b[33m════════════════════════════════════════════════════════\x1b[0m\n");
-        onOutput?.("\x1b[33m⚠ Server process is running but no port was detected.\x1b[0m\n\n");
-        onOutput?.("\x1b[33mPossible causes:\x1b[0m\n");
-        onOutput?.("\x1b[33m  1. Server binds to localhost only (needs 0.0.0.0)\x1b[0m\n");
-        onOutput?.("\x1b[33m  2. Server failed to start (check errors above)\x1b[0m\n");
-        onOutput?.("\x1b[33m  3. Missing dependencies or configuration\x1b[0m\n\n");
-        onOutput?.("\x1b[33mTo fix binding issues, ensure server listens on:\x1b[0m\n");
-        onOutput?.("\x1b[33m  - Vite: vite --host 0.0.0.0\x1b[0m\n");
-        onOutput?.("\x1b[33m  - Express: app.listen(port, '0.0.0.0')\x1b[0m\n");
-        onOutput?.("\x1b[33m  - Next.js: should work automatically\x1b[0m\n");
-        onOutput?.("\x1b[33m════════════════════════════════════════════════════════\x1b[0m\n");
+        onOutput?.("\n\x1b[33m⚠ Server is taking longer than expected...\x1b[0m\n");
+        onOutput?.("\x1b[33m  Check the terminal output above for errors.\x1b[0m\n");
+        onOutput?.("\x1b[33m  The dev server may need manual configuration.\x1b[0m\n");
       }
-    }, 90000);
+    }, 60000);
     
     // Handle server exit
     serverProcess.exit.then((code) => {
       if (serverReadyTimeout) clearTimeout(serverReadyTimeout);
-      if (portReadyTimeout) clearTimeout(portReadyTimeout);
       if (code !== 0 && !serverReadyFired) {
         onError?.(`Dev server exited with code ${code}. Check terminal for details.`);
         onStatusChange?.("error");
@@ -380,7 +261,6 @@ export async function startDevServer(
     
   } catch (error) {
     if (serverReadyTimeout) clearTimeout(serverReadyTimeout);
-    if (portReadyTimeout) clearTimeout(portReadyTimeout);
     const message = error instanceof Error ? error.message : "Unknown error occurred";
     onError?.(message);
     onStatusChange?.("error");
