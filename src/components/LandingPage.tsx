@@ -77,6 +77,7 @@ export function LandingPage() {
       const fsTree = await buildFileSystemTree(
         parsed.owner,
         parsed.repo,
+        parsed.branch,
         files,
         (current, total, fileName) => {
           setLoadingProgress({ current, total, fileName });
