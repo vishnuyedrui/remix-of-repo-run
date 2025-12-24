@@ -17,6 +17,9 @@ interface WorkspaceState {
   fileContent: string;
   isLoadingFile: boolean;
   
+  // File content cache (path -> content)
+  fileContentCache: Map<string, string>;
+  
   // WebContainer
   containerStatus: ContainerStatus;
   terminalOutput: string;
@@ -39,6 +42,8 @@ interface WorkspaceState {
   setSelectedFile: (file: FileTreeNode | null) => void;
   setFileContent: (content: string) => void;
   setIsLoadingFile: (loading: boolean) => void;
+  setCachedFileContent: (path: string, content: string) => void;
+  getCachedFileContent: (path: string) => string | undefined;
   setContainerStatus: (status: ContainerStatus) => void;
   appendTerminalOutput: (output: string) => void;
   clearTerminalOutput: () => void;
@@ -59,6 +64,7 @@ const initialState = {
   selectedFile: null,
   fileContent: "",
   isLoadingFile: false,
+  fileContentCache: new Map<string, string>(),
   containerStatus: "idle" as ContainerStatus,
   terminalOutput: "",
   previewUrl: null,
@@ -95,6 +101,17 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   
   setIsLoadingFile: (loading) => set({ isLoadingFile: loading }),
   
+  setCachedFileContent: (path, content) =>
+    set((state) => {
+      const newCache = new Map(state.fileContentCache);
+      newCache.set(path, content);
+      return { fileContentCache: newCache };
+    }),
+  
+  getCachedFileContent: (path) => {
+    return useWorkspaceStore.getState().fileContentCache.get(path);
+  },
+  
   setContainerStatus: (status) => set({ containerStatus: status }),
   
   appendTerminalOutput: (output) =>
@@ -114,5 +131,5 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   
   setView: (view) => set({ view: view }),
   
-  reset: () => set({ ...initialState, expandedFolders: new Set() }),
+  reset: () => set({ ...initialState, expandedFolders: new Set(), fileContentCache: new Map() }),
 }));

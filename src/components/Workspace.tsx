@@ -137,9 +137,9 @@
 
 
 import { FileTree } from "./FileTree";
-import { CodeEditor } from "./CodeEditor";
+import { LazyCodeEditor } from "./LazyCodeEditor";
 import { Preview } from "./Preview";
-import { Terminal } from "./Terminal";
+import { LazyTerminal } from "./LazyTerminal";
 import { useWorkspaceStore } from "@/store/useWorkspaceStore";
 import { ArrowLeft, Github, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -148,7 +148,14 @@ import { teardownWebContainer } from "@/utils/webcontainer";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 
 export function Workspace() {
-  const { repoInfo, projectInfo, reset, setView, setContainerStatus, clearTerminalOutput, setPreviewUrl, setProjectInfo } = useWorkspaceStore();
+  const repoInfo = useWorkspaceStore((s) => s.repoInfo);
+  const projectInfo = useWorkspaceStore((s) => s.projectInfo);
+  const reset = useWorkspaceStore((s) => s.reset);
+  const setView = useWorkspaceStore((s) => s.setView);
+  const setContainerStatus = useWorkspaceStore((s) => s.setContainerStatus);
+  const clearTerminalOutput = useWorkspaceStore((s) => s.clearTerminalOutput);
+  const setPreviewUrl = useWorkspaceStore((s) => s.setPreviewUrl);
+  const setProjectInfo = useWorkspaceStore((s) => s.setProjectInfo);
 
   const handleBack = () => {
     teardownWebContainer();
@@ -221,7 +228,7 @@ export function Workspace() {
 
         {/* Center - Code Editor */}
         <ResizablePanel defaultSize={50} minSize={30} className="border-r border-border">
-          <CodeEditor />
+          <LazyCodeEditor />
         </ResizablePanel>
 
         <ResizableHandle />
@@ -238,7 +245,7 @@ export function Workspace() {
 
             {/* Terminal */}
             <ResizablePanel defaultSize={30} minSize={20}>
-              <Terminal />
+              <LazyTerminal />
             </ResizablePanel>
           </ResizablePanelGroup>
         </ResizablePanel>
