@@ -27,14 +27,13 @@ export function LandingPage() {
   const [showSettings, setShowSettings] = useState(false);
   const [showDonate, setShowDonate] = useState(false);
 
-  // Show donate popup once per visitor
+  // Show donate popup once per session (not on refresh, but on new visits)
   useEffect(() => {
-    const hasShown = localStorage.getItem(DONATE_POPUP_SHOWN_KEY);
+    const hasShown = sessionStorage.getItem(DONATE_POPUP_SHOWN_KEY);
     if (!hasShown) {
-      // Small delay to let the page load first
       const timer = setTimeout(() => {
         setShowDonate(true);
-        localStorage.setItem(DONATE_POPUP_SHOWN_KEY, "true");
+        sessionStorage.setItem(DONATE_POPUP_SHOWN_KEY, "true");
       }, 1500);
       return () => clearTimeout(timer);
     }
