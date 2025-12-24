@@ -276,6 +276,14 @@ export function LandingPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Privacy notice footer */}
+      <footer className="relative z-10 text-center p-4 text-xs text-muted-foreground">
+        <p>
+          This site uses cookies and third-party advertising (Google AdSense) which may collect browsing data.
+          By using this site, you consent to this data collection.
+        </p>
+      </footer>
     </div>
   );
 }

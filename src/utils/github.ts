@@ -34,17 +34,51 @@ export interface FileTreeNode {
 export type { FileSystemTree };
 
 const GITHUB_TOKEN_KEY = "github_pat";
+const SESSION_STORAGE_PREF_KEY = "github_use_session";
+
+// Maximum limits for repository size
+export const MAX_FILE_COUNT = 1000;
+export const MAX_TOTAL_SIZE_MB = 50;
+export const LARGE_REPO_WARNING_THRESHOLD = 500;
+
+export function getUseSessionStorage(): boolean {
+  return localStorage.getItem(SESSION_STORAGE_PREF_KEY) === "true";
+}
+
+export function setUseSessionStorage(useSession: boolean): void {
+  localStorage.setItem(SESSION_STORAGE_PREF_KEY, useSession ? "true" : "false");
+  // Migrate token if it exists
+  const token = getGitHubToken();
+  if (token) {
+    removeGitHubToken();
+    if (useSession) {
+      sessionStorage.setItem(GITHUB_TOKEN_KEY, token);
+    } else {
+      localStorage.setItem(GITHUB_TOKEN_KEY, token);
+    }
+  }
+}
 
 export function getGitHubToken(): string | null {
+  const useSession = getUseSessionStorage();
+  if (useSession) {
+    return sessionStorage.getItem(GITHUB_TOKEN_KEY);
+  }
   return localStorage.getItem(GITHUB_TOKEN_KEY);
 }
 
 export function setGitHubToken(token: string): void {
-  localStorage.setItem(GITHUB_TOKEN_KEY, token);
+  const useSession = getUseSessionStorage();
+  if (useSession) {
+    sessionStorage.setItem(GITHUB_TOKEN_KEY, token);
+  } else {
+    localStorage.setItem(GITHUB_TOKEN_KEY, token);
+  }
 }
 
 export function removeGitHubToken(): void {
   localStorage.removeItem(GITHUB_TOKEN_KEY);
+  sessionStorage.removeItem(GITHUB_TOKEN_KEY);
 }
 
 // Validate GitHub username/repo name format
@@ -197,6 +231,16 @@ export async function fetchRepoTree(
   
   if (data.truncated) {
     console.warn("Repository tree was truncated due to size. Some files may be missing.");
+  }
+  
+  // Check file count limits
+  const blobCount = data.tree.filter(f => f.type === "blob").length;
+  if (blobCount > MAX_FILE_COUNT) {
+    throw new Error(`Repository has ${blobCount} files, which exceeds the limit of ${MAX_FILE_COUNT}. Please try a smaller repository.`);
+  }
+  
+  if (blobCount > LARGE_REPO_WARNING_THRESHOLD) {
+    console.warn(`Large repository detected (${blobCount} files). Loading may take a while.`);
   }
   
   return data.tree;
