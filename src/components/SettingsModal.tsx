@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Key, Eye, EyeOff, Check, X, ExternalLink } from "lucide-react";
+import { Key, Eye, EyeOff, Check, X, ExternalLink, AlertTriangle } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -10,7 +10,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { getGitHubToken, setGitHubToken, removeGitHubToken } from "@/utils/github";
+import { Switch } from "@/components/ui/switch";
+import { getGitHubToken, setGitHubToken, removeGitHubToken, getUseSessionStorage, setUseSessionStorage } from "@/utils/github";
 
 interface SettingsModalProps {
   open: boolean;
@@ -22,12 +23,14 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
   const [showToken, setShowToken] = useState(false);
   const [hasExistingToken, setHasExistingToken] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [useSession, setUseSession] = useState(false);
 
   useEffect(() => {
     if (open) {
       const existingToken = getGitHubToken();
       setHasExistingToken(!!existingToken);
       setToken(existingToken || "");
+      setUseSession(getUseSessionStorage());
       setSaved(false);
     }
   }, [open]);
@@ -45,6 +48,15 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
     removeGitHubToken();
     setToken("");
     setHasExistingToken(false);
+  };
+
+  const handleSessionToggle = (checked: boolean) => {
+    setUseSessionStorage(checked);
+    setUseSession(checked);
+    // If switching storage type and token exists, migrate it
+    if (token.trim()) {
+      setGitHubToken(token.trim());
+    }
   };
 
   return (
@@ -93,9 +105,28 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
                 )}
               </button>
             </div>
-            <p className="text-xs text-muted-foreground">
-              Your token is stored locally in your browser and never sent to any server.
-            </p>
+          </div>
+
+          {/* Security notice */}
+          <div className="flex items-start gap-2 p-3 rounded-lg bg-muted/50 border border-border/50">
+            <AlertTriangle className="w-4 h-4 text-yellow-500 mt-0.5 shrink-0" />
+            <div className="text-xs text-muted-foreground space-y-1">
+              <p>Your token is stored locally and never sent to any server.</p>
+              <p><strong>Security tip:</strong> Use minimal scopes — only "public_repo" for public repositories, or "repo" for private ones.</p>
+            </div>
+          </div>
+
+          {/* Session storage toggle */}
+          <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50 border border-border/50">
+            <div className="space-y-0.5">
+              <Label htmlFor="session-storage" className="text-sm">Clear token on tab close</Label>
+              <p className="text-xs text-muted-foreground">Use session storage for shorter persistence</p>
+            </div>
+            <Switch
+              id="session-storage"
+              checked={useSession}
+              onCheckedChange={handleSessionToggle}
+            />
           </div>
 
           <div className="flex gap-2">
@@ -126,7 +157,7 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
 
           <div className="pt-4 border-t border-border/50">
             <a
-              href="https://github.com/settings/tokens/new?description=InstantIDE&scopes=repo"
+              href="https://github.com/settings/tokens/new?description=InstantIDE&scopes=public_repo"
               target="_blank"
               rel="noopener noreferrer"
               className="text-sm text-primary hover:underline flex items-center gap-1"
@@ -135,8 +166,7 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
               <ExternalLink className="w-3 h-3" />
             </a>
             <p className="text-xs text-muted-foreground mt-1">
-              Only "repo" scope is needed for private repositories.
-              No scopes needed for public repos.
+              Use "public_repo" scope for public repos only, or "repo" for private.
             </p>
           </div>
         </div>
