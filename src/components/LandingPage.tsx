@@ -64,8 +64,8 @@ export function LandingPage() {
     clearTerminalOutput();
 
     try {
-      // Fetch repository tree
-      const files = await fetchRepoTree(parsed.owner, parsed.repo, parsed.branch);
+      // Fetch repository tree (returns files and commit SHA)
+      const { files, sha } = await fetchRepoTree(parsed.owner, parsed.repo, parsed.branch);
       
       // Detect project type
       const projectInfo = detectProjectType(files);
@@ -73,11 +73,11 @@ export function LandingPage() {
       // Transform to nested tree for UI
       const nestedTree = transformToNestedTree(files);
       
-      // Build file system tree for WebContainer
+      // Build file system tree for WebContainer (use commit SHA for CDN URLs)
       const fsTree = await buildFileSystemTree(
         parsed.owner,
         parsed.repo,
-        parsed.branch,
+        sha,
         files,
         (current, total, fileName) => {
           setLoadingProgress({ current, total, fileName });

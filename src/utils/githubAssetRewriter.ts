@@ -47,17 +47,17 @@ function rewriteHtmlAssets(content: string, baseUrl: string): string {
     'gi'
   );
   
-  return content.replace(attrPattern, (match, prefix, slashOrDot, path, ext, suffix) => {
+  return content.replace(attrPattern, (match, prefix, slashOrDot, path, _ext, suffix) => {
     // Skip external URLs and data URIs
     if (path.startsWith('http') || path.startsWith('data:') || path.startsWith('//')) {
       return match;
     }
     
-    // Build the full path
+    // Build the full path - path already includes the extension
     const fullPath = slashOrDot === './' ? path : (slashOrDot === '/' ? path : `${slashOrDot}${path}`);
     const cleanPath = fullPath.replace(/^\//, ''); // Remove leading slash
     
-    return `${prefix}${baseUrl}/${cleanPath}.${ext}${suffix}`;
+    return `${prefix}${baseUrl}/${cleanPath}${suffix}`;
   });
 }
 
@@ -72,17 +72,17 @@ function rewriteCssAssets(content: string, baseUrl: string): string {
     'gi'
   );
   
-  return content.replace(urlPattern, (match, prefix, slashOrDot, path, ext, suffix) => {
+  return content.replace(urlPattern, (match, prefix, slashOrDot, path, _ext, suffix) => {
     // Skip external URLs and data URIs
     if (path.startsWith('http') || path.startsWith('data:') || path.startsWith('//')) {
       return match;
     }
     
-    // Build the full path
+    // Build the full path - path already includes the extension
     const fullPath = slashOrDot === './' ? path : (slashOrDot === '/' ? path : `${slashOrDot}${path}`);
     const cleanPath = fullPath.replace(/^\//, '');
     
-    return `${prefix}${baseUrl}/${cleanPath}.${ext}${suffix}`;
+    return `${prefix}${baseUrl}/${cleanPath}${suffix}`;
   });
 }
 
@@ -98,7 +98,7 @@ function rewriteJsAssets(content: string, baseUrl: string): string {
     'gi'
   );
   
-  return content.replace(stringPattern, (match, quote, slashOrDot, path, ext) => {
+  return content.replace(stringPattern, (match, quote, slashOrDot, path, _ext) => {
     // Skip external URLs and data URIs
     if (path.startsWith('http') || path.startsWith('data:') || path.startsWith('//')) {
       return match;
@@ -109,10 +109,10 @@ function rewriteJsAssets(content: string, baseUrl: string): string {
       return match;
     }
     
-    // Build the full path
+    // Build the full path - path already includes the extension
     const fullPath = slashOrDot === './' ? path : (slashOrDot === '/' ? path : `${slashOrDot}${path}`);
     const cleanPath = fullPath.replace(/^\//, '');
     
-    return `${quote}${baseUrl}/${cleanPath}.${ext}${quote}`;
+    return `${quote}${baseUrl}/${cleanPath}${quote}`;
   });
 }
