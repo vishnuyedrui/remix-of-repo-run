@@ -2,20 +2,33 @@ import { useEffect, useRef } from "react";
 import { Terminal as XTerm } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 import { useWorkspaceStore } from "@/store/useWorkspaceStore";
+import { useResizeObserver } from "@/hooks/useResizeObserver";
 import { Terminal as TerminalIcon } from "lucide-react";
 import "xterm/css/xterm.css";
 
 export function Terminal() {
-  const terminalRef = useRef<HTMLDivElement>(null);
+  const terminalContainerRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const lastOutputRef = useRef<string>("");
   
-  const { terminalOutput, containerStatus } = useWorkspaceStore();
+  const terminalOutput = useWorkspaceStore((s) => s.terminalOutput);
+  const containerStatus = useWorkspaceStore((s) => s.containerStatus);
+
+  // Use shared ResizeObserver for terminal fitting
+  const resizeRef = useResizeObserver<HTMLDivElement>(() => {
+    if (fitAddonRef.current) {
+      try {
+        fitAddonRef.current.fit();
+      } catch {
+        // Ignore resize errors
+      }
+    }
+  });
 
   // Initialize terminal
   useEffect(() => {
-    if (!terminalRef.current || xtermRef.current) return;
+    if (!terminalContainerRef.current || xtermRef.current) return;
 
     const xterm = new XTerm({
       theme: {
@@ -53,24 +66,13 @@ export function Terminal() {
     const fitAddon = new FitAddon();
     xterm.loadAddon(fitAddon);
     
-    xterm.open(terminalRef.current);
+    xterm.open(terminalContainerRef.current);
     fitAddon.fit();
 
     xtermRef.current = xterm;
     fitAddonRef.current = fitAddon;
 
-    // Handle resize
-    const resizeObserver = new ResizeObserver(() => {
-      try {
-        fitAddon.fit();
-      } catch {
-        // Ignore resize errors
-      }
-    });
-    resizeObserver.observe(terminalRef.current);
-
     return () => {
-      resizeObserver.disconnect();
       xterm.dispose();
       xtermRef.current = null;
       fitAddonRef.current = null;
@@ -98,7 +100,7 @@ export function Terminal() {
   }, [terminalOutput]);
 
   return (
-    <div className="h-full flex flex-col bg-[#07070a]">
+    <div ref={resizeRef} className="h-full flex flex-col bg-[#07070a]">
       {/* Header */}
       <div className="h-8 px-4 flex items-center justify-between border-b border-border/50 flex-shrink-0">
         <div className="flex items-center gap-2">
@@ -121,7 +123,7 @@ export function Terminal() {
       </div>
 
       {/* Terminal content */}
-      <div ref={terminalRef} className="flex-1 p-2" />
+      <div ref={terminalContainerRef} className="flex-1 p-2" />
     </div>
   );
 }
