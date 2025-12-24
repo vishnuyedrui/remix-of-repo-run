@@ -34,7 +34,7 @@ export function LandingPage() {
       const timer = setTimeout(() => {
         setShowDonate(true);
         sessionStorage.setItem(DONATE_POPUP_SHOWN_KEY, "true");
-      }, 1500);
+      }, 500);
       return () => clearTimeout(timer);
     }
   }, []);
