@@ -200,11 +200,16 @@ export async function getDefaultBranch(owner: string, repo: string): Promise<str
   return data.default_branch;
 }
 
+export interface RepoTreeResult {
+  files: GitHubFile[];
+  sha: string; // Commit SHA for immutable CDN URLs
+}
+
 export async function fetchRepoTree(
   owner: string,
   repo: string,
   branch: string
-): Promise<GitHubFile[]> {
+): Promise<RepoTreeResult> {
   // First, try with the provided branch
   let response = await fetchWithAuth(
     `https://api.github.com/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`
@@ -244,7 +249,7 @@ export async function fetchRepoTree(
     console.warn(`Large repository detected (${blobCount} files). Loading may take a while.`);
   }
   
-  return data.tree;
+  return { files: data.tree, sha: data.sha };
 }
 
 export async function fetchFileContent(
@@ -435,7 +440,7 @@ export function transformToNestedTree(files: GitHubFile[]): FileTreeNode[] {
 export async function buildFileSystemTree(
   owner: string,
   repo: string,
-  branch: string,
+  commitSha: string,
   files: GitHubFile[],
   onProgress?: (current: number, total: number, fileName: string) => void
 ): Promise<FileSystemTree> {
@@ -462,7 +467,7 @@ export async function buildFileSystemTree(
           
           // Rewrite asset paths to GitHub raw CDN for text files
           if (!isBinary && typeof content === 'string') {
-            content = rewriteAssetsToGitHubRaw(content, file.path, owner, repo, branch);
+            content = rewriteAssetsToGitHubRaw(content, file.path, owner, repo, commitSha);
           }
           
           const parts = file.path.split("/");
