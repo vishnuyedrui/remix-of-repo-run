@@ -23,7 +23,7 @@ import { runFullWorkflow } from "@/utils/webcontainer";
 export function LandingPage() {
   const [url, setUrl] = useState("");
   const [showSettings, setShowSettings] = useState(false);
-  const [showDonate, setShowDonate] = useState(true);
+  const [showDonate, setShowDonate] = useState(false);
 
   const handlePayment = () => {
     window.location.href = "https://rzp.io/rzp/bkbe8jK";
