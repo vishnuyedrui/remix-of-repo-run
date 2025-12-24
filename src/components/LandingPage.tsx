@@ -1,4 +1,4 @@
-import { useState, memo } from "react";
+import { useState, useEffect, memo } from "react";
 import { Github, Rocket, Settings, Zap, Code2, Terminal as TerminalIcon, Heart, CreditCard } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,6 +24,18 @@ export function LandingPage() {
   const [url, setUrl] = useState("");
   const [showSettings, setShowSettings] = useState(false);
   const [showDonate, setShowDonate] = useState(false);
+
+  // Show donate popup once per session after 0.5s delay
+  useEffect(() => {
+    const hasSeenDonate = sessionStorage.getItem("hasSeenDonate");
+    if (!hasSeenDonate) {
+      const timer = setTimeout(() => {
+        setShowDonate(true);
+        sessionStorage.setItem("hasSeenDonate", "true");
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, []);
 
   const handlePayment = () => {
     window.location.href = "https://rzp.io/rzp/bkbe8jK";
