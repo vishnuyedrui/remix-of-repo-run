@@ -3,6 +3,19 @@ import type { ProjectType } from "./projectDetection";
 
 let webcontainerInstance: WebContainer | null = null;
 let bootPromise: Promise<WebContainer> | null = null;
+let executionTimer: ReturnType<typeof setTimeout> | null = null;
+
+// Status messages for user feedback
+export const STATUS_MESSAGES = {
+  SUCCESS: "✓ Node.js server is running successfully.",
+  INSTALL_FAIL: "✗ Failed to install dependencies.",
+  START_FAIL: "✗ Application failed to start.",
+  TIMEOUT_INSTALL: "✗ Dependency installation timed out. This project may use outdated packages.",
+  NO_START_SCRIPT: "✗ No start script found. This Node.js project may require manual or local setup.",
+  NOT_NODEJS: "✗ This repository is not a Node.js project. Please select the HTML/CSS option.",
+  NO_PREVIEW: "⚠ Project started but no web server was detected. Online preview is not supported.",
+  OUTDATED_WARNING: "⚠ This Node.js project uses outdated tooling and may not run reliably online.",
+} as const;
 
 // Check if WebContainers are supported in this environment
 export function checkWebContainerSupport(): { supported: boolean; reason?: string } {
@@ -111,6 +124,60 @@ export async function runCommand(
   return process.exit;
 }
 
+// Run command with timeout
+async function runCommandWithTimeout(
+  container: WebContainer,
+  command: string,
+  args: string[],
+  onOutput?: (data: string) => void,
+  timeoutMs: number = 480000 // 8 minutes default
+): Promise<{ exitCode: number; timedOut: boolean }> {
+  return new Promise(async (resolve) => {
+    let timedOut = false;
+    
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      resolve({ exitCode: -1, timedOut: true });
+    }, timeoutMs);
+    
+    try {
+      const process = await container.spawn(command, args);
+      
+      process.output.pipeTo(
+        new WritableStream({
+          write(data) {
+            if (!timedOut) {
+              onOutput?.(data);
+            }
+          },
+        })
+      );
+      
+      const exitCode = await process.exit;
+      
+      if (!timedOut) {
+        clearTimeout(timeout);
+        resolve({ exitCode, timedOut: false });
+      }
+    } catch (error) {
+      if (!timedOut) {
+        clearTimeout(timeout);
+        resolve({ exitCode: -1, timedOut: false });
+      }
+    }
+  });
+}
+
+// Verify package.json exists for Node.js projects
+async function verifyPackageJson(container: WebContainer): Promise<boolean> {
+  try {
+    const result = await container.spawn("test", ["-f", "package.json"]);
+    return await result.exit === 0;
+  } catch {
+    return false;
+  }
+}
+
 async function findDevScript(container: WebContainer): Promise<string | null> {
   // Try to read package.json to find the right script
   try {
@@ -131,8 +198,8 @@ async function findDevScript(container: WebContainer): Promise<string | null> {
     const packageJson = JSON.parse(packageJsonContent);
     const scripts = packageJson.scripts || {};
     
-    // Check for common dev script names in order of preference
-    const devScripts = ["dev", "start", "serve", "develop", "watch"];
+    // Check for common dev script names in order of preference (start first per spec)
+    const devScripts = ["start", "dev", "serve", "develop", "watch"];
     for (const script of devScripts) {
       if (scripts[script]) {
         return script;
@@ -158,25 +225,34 @@ export async function startDevServer(
     if (serverReadyFired) return;
     serverReadyFired = true;
     if (serverReadyTimeout) clearTimeout(serverReadyTimeout);
-    onOutput?.(`\n\x1b[32m✓ Server ready${port ? ` on port ${port}` : ''}\x1b[0m\n`);
+    onOutput?.(`\n\x1b[32m${STATUS_MESSAGES.SUCCESS}${port ? ` (port ${port})` : ''}\x1b[0m\n`);
     onServerReady?.(url);
     onStatusChange?.("ready");
   };
   
   try {
-    // Install dependencies
+    // Install dependencies with timeout and legacy-peer-deps
     onStatusChange?.("installing");
-    onOutput?.("\x1b[36m➜ Running npm install...\x1b[0m\n\n");
+    onOutput?.("\x1b[36m➜ Running npm install --legacy-peer-deps...\x1b[0m\n\n");
     
-    const installExitCode = await runCommand(
+    const installResult = await runCommandWithTimeout(
       container,
       "npm",
-      ["install"],
-      onOutput
+      ["install", "--legacy-peer-deps"],
+      onOutput,
+      480000 // 8 minutes
     );
     
-    if (installExitCode !== 0) {
-      onError?.("npm install failed. Check the terminal output for details.");
+    if (installResult.timedOut) {
+      onOutput?.(`\n\x1b[31m${STATUS_MESSAGES.TIMEOUT_INSTALL}\x1b[0m\n`);
+      onError?.(STATUS_MESSAGES.TIMEOUT_INSTALL);
+      onStatusChange?.("error");
+      return;
+    }
+    
+    if (installResult.exitCode !== 0) {
+      onOutput?.(`\n\x1b[31m${STATUS_MESSAGES.INSTALL_FAIL}\x1b[0m\n`);
+      onError?.(STATUS_MESSAGES.INSTALL_FAIL);
       onStatusChange?.("error");
       return;
     }
@@ -187,7 +263,8 @@ export async function startDevServer(
     const devScript = await findDevScript(container);
     
     if (!devScript) {
-      onError?.("No dev/start script found in package.json. The project needs a 'dev', 'start', or 'serve' script.");
+      onOutput?.(`\n\x1b[31m${STATUS_MESSAGES.NO_START_SCRIPT}\x1b[0m\n`);
+      onError?.(STATUS_MESSAGES.NO_START_SCRIPT);
       onStatusChange?.("error");
       return;
     }
@@ -198,7 +275,7 @@ export async function startDevServer(
     
     const serverProcess = await container.spawn("npm", ["run", devScript]);
     
-    // Patterns that indicate the server is ready (fallback detection)
+    // Common port patterns for detection
     const readyPatterns = [
       /localhost:(\d+)/i,
       /127\.0\.0\.1:(\d+)/i,
@@ -207,6 +284,7 @@ export async function startDevServer(
       /ready in \d+/i,
       /local:\s+http/i,
       /➜\s+local/i,
+      /port\s+(\d+)/i,
     ];
     
     serverProcess.output.pipeTo(
@@ -244,7 +322,7 @@ export async function startDevServer(
     // Set a timeout - if server-ready hasn't fired in 60 seconds, show helpful message
     serverReadyTimeout = setTimeout(() => {
       if (!serverReadyFired) {
-        onOutput?.("\n\x1b[33m⚠ Server is taking longer than expected...\x1b[0m\n");
+        onOutput?.(`\n\x1b[33m${STATUS_MESSAGES.NO_PREVIEW}\x1b[0m\n`);
         onOutput?.("\x1b[33m  Check the terminal output above for errors.\x1b[0m\n");
         onOutput?.("\x1b[33m  The dev server may need manual configuration.\x1b[0m\n");
       }
@@ -254,7 +332,8 @@ export async function startDevServer(
     serverProcess.exit.then((code) => {
       if (serverReadyTimeout) clearTimeout(serverReadyTimeout);
       if (code !== 0 && !serverReadyFired) {
-        onError?.(`Dev server exited with code ${code}. Check terminal for details.`);
+        onOutput?.(`\n\x1b[31m${STATUS_MESSAGES.START_FAIL} (exit code ${code})\x1b[0m\n`);
+        onError?.(STATUS_MESSAGES.START_FAIL);
         onStatusChange?.("error");
       }
     });
@@ -496,15 +575,23 @@ async function serveStaticSite(
     // Create the server script with proper MIME handling
     await container.fs.writeFile("server.js", generateStaticServerScript(uniqueDirs));
 
-    // Install express
-    const installExitCode = await runCommand(
+    // Install express with timeout
+    const installResult = await runCommandWithTimeout(
       container,
       "npm",
-      ["install"],
-      onOutput
+      ["install", "--legacy-peer-deps"],
+      onOutput,
+      480000 // 8 minutes
     );
 
-    if (installExitCode !== 0) {
+    if (installResult.timedOut) {
+      onOutput?.(`\n\x1b[31m${STATUS_MESSAGES.TIMEOUT_INSTALL}\x1b[0m\n`);
+      onError?.(STATUS_MESSAGES.TIMEOUT_INSTALL);
+      onStatusChange?.("error");
+      return;
+    }
+
+    if (installResult.exitCode !== 0) {
       onError?.("Failed to install static server dependencies.");
       onStatusChange?.("error");
       return;
@@ -562,6 +649,23 @@ async function serveStaticSite(
   }
 }
 
+// Clear execution timer
+function clearExecutionTimer(): void {
+  if (executionTimer) {
+    clearTimeout(executionTimer);
+    executionTimer = null;
+  }
+}
+
+// Start 10-minute auto-termination timer
+function startExecutionTimer(onOutput?: (data: string) => void): void {
+  clearExecutionTimer();
+  executionTimer = setTimeout(() => {
+    onOutput?.("\n\x1b[33m⚠ Execution time limit reached (10 minutes). Terminating...\x1b[0m\n");
+    teardownWebContainer();
+  }, 600000); // 10 minutes
+}
+
 export async function runFullWorkflow(
   files: FileSystemTree,
   callbacks: ContainerCallbacks,
@@ -612,6 +716,20 @@ export async function runFullWorkflow(
     await mountFiles(container, files);
     onOutput?.("\x1b[32m✓ Files mounted!\x1b[0m\n\n");
     
+    // For Node.js projects, verify package.json exists
+    if (projectType === "nodejs") {
+      const hasPackageJson = await verifyPackageJson(container);
+      if (!hasPackageJson) {
+        onOutput?.(`\x1b[31m${STATUS_MESSAGES.NOT_NODEJS}\x1b[0m\n`);
+        onError?.(STATUS_MESSAGES.NOT_NODEJS);
+        onStatusChange?.("error");
+        return;
+      }
+    }
+    
+    // Start 10-minute execution timer
+    startExecutionTimer(onOutput);
+    
     // Start appropriate server based on project type
     if (projectType === "static") {
       await serveStaticSite(container, callbacks);
@@ -620,6 +738,7 @@ export async function runFullWorkflow(
     }
     
   } catch (error) {
+    clearExecutionTimer();
     const message = error instanceof Error ? error.message : "Unknown error occurred";
     
     // Provide more helpful error messages
@@ -636,6 +755,7 @@ export async function runFullWorkflow(
 }
 
 export function teardownWebContainer(): void {
+  clearExecutionTimer();
   if (webcontainerInstance) {
     webcontainerInstance.teardown();
     webcontainerInstance = null;
