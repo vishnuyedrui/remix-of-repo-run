@@ -42,15 +42,15 @@ interface TreeNodeProps {
 }
 
 function TreeNode({ node, depth }: TreeNodeProps) {
-  const {
-    expandedFolders,
-    toggleFolder,
-    selectedFile,
-    setSelectedFile,
-    setFileContent,
-    setIsLoadingFile,
-    repoInfo,
-  } = useWorkspaceStore();
+  const expandedFolders = useWorkspaceStore((s) => s.expandedFolders);
+  const toggleFolder = useWorkspaceStore((s) => s.toggleFolder);
+  const selectedFile = useWorkspaceStore((s) => s.selectedFile);
+  const setSelectedFile = useWorkspaceStore((s) => s.setSelectedFile);
+  const setFileContent = useWorkspaceStore((s) => s.setFileContent);
+  const setIsLoadingFile = useWorkspaceStore((s) => s.setIsLoadingFile);
+  const setCachedFileContent = useWorkspaceStore((s) => s.setCachedFileContent);
+  const getCachedFileContent = useWorkspaceStore((s) => s.getCachedFileContent);
+  const repoInfo = useWorkspaceStore((s) => s.repoInfo);
 
   const isExpanded = expandedFolders.has(node.path);
   const isSelected = selectedFile?.path === node.path;
@@ -60,6 +60,14 @@ function TreeNode({ node, depth }: TreeNodeProps) {
       toggleFolder(node.path);
     } else {
       setSelectedFile(node);
+      
+      // Check cache first
+      const cachedContent = getCachedFileContent(node.path);
+      if (cachedContent !== undefined) {
+        setFileContent(cachedContent);
+        return;
+      }
+      
       setIsLoadingFile(true);
       
       try {
@@ -70,8 +78,10 @@ function TreeNode({ node, depth }: TreeNodeProps) {
             node.path,
             node.sha
           );
-          // Content from editor should always be string (text files only)
-          setFileContent(typeof content === 'string' ? content : '// Binary file');
+          const textContent = typeof content === 'string' ? content : '// Binary file';
+          setFileContent(textContent);
+          // Cache the content
+          setCachedFileContent(node.path, textContent);
         }
       } catch (error) {
         console.error("Failed to fetch file:", error);
@@ -80,7 +90,7 @@ function TreeNode({ node, depth }: TreeNodeProps) {
         setIsLoadingFile(false);
       }
     }
-  }, [node, repoInfo, toggleFolder, setSelectedFile, setFileContent, setIsLoadingFile]);
+  }, [node, repoInfo, toggleFolder, setSelectedFile, setFileContent, setIsLoadingFile, getCachedFileContent, setCachedFileContent]);
 
   const Icon = node.type === "folder"
     ? (isExpanded ? FolderOpen : Folder)
