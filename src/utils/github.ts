@@ -1,4 +1,5 @@
 import type { FileSystemTree } from "@webcontainer/api";
+import { rewriteAssetsToGitHubRaw } from "./githubAssetRewriter";
 
 export interface GitHubFile {
   path: string;
@@ -434,6 +435,7 @@ export function transformToNestedTree(files: GitHubFile[]): FileTreeNode[] {
 export async function buildFileSystemTree(
   owner: string,
   repo: string,
+  branch: string,
   files: GitHubFile[],
   onProgress?: (current: number, total: number, fileName: string) => void
 ): Promise<FileSystemTree> {
@@ -456,7 +458,12 @@ export async function buildFileSystemTree(
       batch.map(async (file) => {
         try {
           const isBinary = isBinaryAsset(file.path);
-          const content = await fetchFileContent(owner, repo, file.path, file.sha, { asBinary: isBinary });
+          let content = await fetchFileContent(owner, repo, file.path, file.sha, { asBinary: isBinary });
+          
+          // Rewrite asset paths to GitHub raw CDN for text files
+          if (!isBinary && typeof content === 'string') {
+            content = rewriteAssetsToGitHubRaw(content, file.path, owner, repo, branch);
+          }
           
           const parts = file.path.split("/");
           let current: Record<string, any> = tree;
