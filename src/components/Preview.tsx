@@ -179,7 +179,7 @@ To run WebContainers, your server needs these headers:
     {
       "source": "/(.*)",
       "headers": [
-        { "key": "Cross-Origin-Embedder-Policy", "value": "require-corp" },
+        { "key": "Cross-Origin-Embedder-Policy", "value": "credentialless" },
         { "key": "Cross-Origin-Opener-Policy", "value": "same-origin" }
       ]
     }
@@ -188,11 +188,11 @@ To run WebContainers, your server needs these headers:
 
 ## Netlify (_headers file)
 /*
-  Cross-Origin-Embedder-Policy: require-corp
+  Cross-Origin-Embedder-Policy: credentialless
   Cross-Origin-Opener-Policy: same-origin
 
 ## Nginx
-add_header Cross-Origin-Embedder-Policy "require-corp";
+add_header Cross-Origin-Embedder-Policy "credentialless";
 add_header Cross-Origin-Opener-Policy "same-origin";
 `;
 
@@ -236,7 +236,7 @@ function WebContainerUnavailable({
           </Button>
         </div>
         <code className="text-xs block bg-background/80 p-3 rounded border border-border overflow-x-auto">
-          <span className="text-primary">Cross-Origin-Embedder-Policy:</span> require-corp<br />
+          <span className="text-primary">Cross-Origin-Embedder-Policy:</span> credentialless<br />
           <span className="text-primary">Cross-Origin-Opener-Policy:</span> same-origin
         </code>
       </div>
