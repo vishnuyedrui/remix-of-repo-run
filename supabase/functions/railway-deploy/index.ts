@@ -76,35 +76,16 @@ serve(async (req) => {
         const repoFullName = `${owner}/${repo.replace(/\.git$/, '')}`;
         console.log('Creating project for repo:', repoFullName);
 
-        // Step 0: Get user's teams to find workspace ID
-        const getTeamsQuery = `
-          query me {
-            me {
-              teams {
-                edges {
-                  node {
-                    id
-                    name
-                  }
-                }
-              }
-            }
-          }
-        `;
-
-        const teamsResult = await graphqlRequest(getTeamsQuery, {});
-        const teams = teamsResult.me?.teams?.edges || [];
-        
-        if (teams.length === 0) {
-          console.error('No teams found for user');
+        // Get workspace ID from secret
+        const workspaceId = Deno.env.get('RAILWAY_WORKSPACE_ID');
+        if (!workspaceId) {
+          console.error('RAILWAY_WORKSPACE_ID not configured');
           return new Response(
-            JSON.stringify({ error: 'No Railway teams/workspaces found. Please create a team in Railway dashboard first.' }),
-            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            JSON.stringify({ error: 'Railway workspace ID not configured. Please add RAILWAY_WORKSPACE_ID secret.' }),
+            { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
           );
         }
-
-        const teamId = teams[0].node.id;
-        console.log('Using team/workspace:', teamId, teams[0].node.name);
+        console.log('Using workspace ID:', workspaceId);
 
         // Step 1: Create a new project with teamId
         const createProjectQuery = `
@@ -119,7 +100,7 @@ serve(async (req) => {
         const projectResult = await graphqlRequest(createProjectQuery, {
           input: {
             name: repo.replace(/\.git$/, ''),
-            teamId: teamId,
+            teamId: workspaceId,
           }
         });
 
