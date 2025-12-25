@@ -6,22 +6,32 @@ let bootPromise: Promise<WebContainer> | null = null;
 
 // Check if WebContainers are supported in this environment
 export function checkWebContainerSupport(): { supported: boolean; reason?: string } {
+  console.log("[WebContainer] Checking support...");
+  console.log("[WebContainer] SharedArrayBuffer available:", typeof SharedArrayBuffer !== "undefined");
+  console.log("[WebContainer] WebAssembly available:", typeof WebAssembly !== "undefined");
+  console.log("[WebContainer] crossOriginIsolated:", typeof crossOriginIsolated !== "undefined" ? crossOriginIsolated : "N/A");
+  
   // Check for SharedArrayBuffer (required for WebContainers)
   if (typeof SharedArrayBuffer === "undefined") {
+    const reason = "SharedArrayBuffer is not available. This usually means the page is missing Cross-Origin-Isolation headers (COOP/COEP).";
+    console.error("[WebContainer] Support check failed:", reason);
     return {
       supported: false,
-      reason: "SharedArrayBuffer is not available. This usually means the page is missing Cross-Origin-Isolation headers (COOP/COEP).",
+      reason,
     };
   }
 
   // Check for basic WebAssembly support
   if (typeof WebAssembly === "undefined") {
+    const reason = "WebAssembly is not supported in this browser.";
+    console.error("[WebContainer] Support check failed:", reason);
     return {
       supported: false,
-      reason: "WebAssembly is not supported in this browser.",
+      reason,
     };
   }
 
+  console.log("[WebContainer] Support check passed!");
   return { supported: true };
 }
 
@@ -42,15 +52,20 @@ export interface ContainerCallbacks {
 }
 
 export async function bootWebContainer(): Promise<WebContainer> {
+  console.log("[WebContainer] bootWebContainer called");
+  
   if (webcontainerInstance) {
+    console.log("[WebContainer] Returning existing instance");
     return webcontainerInstance;
   }
   
   if (bootPromise) {
+    console.log("[WebContainer] Returning existing boot promise");
     return bootPromise;
   }
   
   const attemptBoot = async (attempt: number = 1): Promise<WebContainer> => {
+    console.log(`[WebContainer] Boot attempt ${attempt} starting...`);
     try {
       // Race the boot against a 30-second timeout (increased from 6s for slower connections)
       const timeoutPromise = new Promise<never>((_, reject) => {
@@ -59,16 +74,19 @@ export async function bootWebContainer(): Promise<WebContainer> {
         }, 30000);
       });
       
+      console.log("[WebContainer] Calling WebContainer.boot()...");
       const container = await Promise.race([
         WebContainer.boot(),
         timeoutPromise
       ]);
       
+      console.log("[WebContainer] Boot successful!");
       return container;
     } catch (error) {
+      console.error(`[WebContainer] Boot attempt ${attempt} failed:`, error);
       // Retry once on timeout
       if (attempt < 2 && error instanceof Error && error.message.includes("timed out")) {
-        console.log("WebContainer boot attempt", attempt, "failed, retrying...");
+        console.log("[WebContainer] Retrying boot...");
         return attemptBoot(attempt + 1);
       }
       throw new Error("Boot timed out. Please reload or check if your browser supports WebContainers (Chrome/Edge required).");
@@ -78,8 +96,10 @@ export async function bootWebContainer(): Promise<WebContainer> {
   try {
     bootPromise = attemptBoot();
     webcontainerInstance = await bootPromise;
+    console.log("[WebContainer] Instance stored successfully");
     return webcontainerInstance;
   } catch (error) {
+    console.error("[WebContainer] Boot failed completely:", error);
     bootPromise = null;
     throw error;
   }
@@ -166,21 +186,30 @@ export async function startDevServer(
   try {
     // Install dependencies
     onStatusChange?.("installing");
+    console.log("[WebContainer] Starting npm install...");
     onOutput?.("\x1b[36m➜ Running npm install...\x1b[0m\n\n");
     
     const installExitCode = await runCommand(
       container,
       "npm",
       ["install"],
-      onOutput
+      (data) => {
+        console.log("[WebContainer] npm install output:", data.trim());
+        onOutput?.(data);
+      }
     );
     
+    console.log("[WebContainer] npm install exit code:", installExitCode);
+    
     if (installExitCode !== 0) {
-      onError?.("npm install failed. Check the terminal output for details.");
+      const errorMsg = `npm install failed with exit code ${installExitCode}. Check terminal for details.`;
+      console.error("[WebContainer]", errorMsg);
+      onError?.(errorMsg);
       onStatusChange?.("error");
       return;
     }
     
+    console.log("[WebContainer] Dependencies installed successfully");
     onOutput?.("\n\x1b[32m✓ Dependencies installed successfully!\x1b[0m\n\n");
     
     // Find the right dev script
