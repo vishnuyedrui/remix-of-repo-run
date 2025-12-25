@@ -138,6 +138,152 @@ export async function runCommand(
   return process.exit;
 }
 
+// Helper: buffered output to avoid flooding the terminal
+function createBufferedOutput(
+  onOutput?: (data: string) => void,
+  flushMs: number = 50
+): { write: (chunk: string) => void; flush: () => void } {
+  let buffer = "";
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  const flush = () => {
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
+    if (!buffer) return;
+    onOutput?.(buffer);
+    buffer = "";
+  };
+
+  const write = (chunk: string) => {
+    buffer += chunk;
+    if (!timer) timer = setTimeout(flush, flushMs);
+  };
+
+  return { write, flush };
+}
+
+// Helper: check if a file exists in the container
+async function fileExists(container: WebContainer, path: string): Promise<boolean> {
+  try {
+    const p = await container.spawn("test", ["-f", path]);
+    return (await p.exit) === 0;
+  } catch {
+    return false;
+  }
+}
+
+// Helper: read and parse a JSON file from the container
+async function readJsonFile(container: WebContainer, path: string): Promise<any | null> {
+  try {
+    const proc = await container.spawn("cat", [path]);
+    let content = "";
+
+    await proc.output.pipeTo(
+      new WritableStream({
+        write(data) {
+          content += data;
+        },
+      })
+    );
+
+    const code = await proc.exit;
+    if (code !== 0) return null;
+    return JSON.parse(content);
+  } catch {
+    return null;
+  }
+}
+
+// Helper: detect unsupported git+ssh dependencies
+function hasGitSshDependencies(pkg: any): boolean {
+  const sections = ["dependencies", "devDependencies", "optionalDependencies"];
+  for (const section of sections) {
+    const deps = pkg?.[section];
+    if (!deps) continue;
+    for (const value of Object.values(deps)) {
+      if (typeof value !== "string") continue;
+      if (value.startsWith("git+ssh://") || value.startsWith("ssh://") || value.includes("git@")) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// Helper: run a command with timeout and progress hints
+async function runCommandWithTimeout(
+  container: WebContainer,
+  command: string,
+  args: string[],
+  onOutput?: (data: string) => void,
+  options?: { timeoutMs?: number; label?: string; bufferMs?: number }
+): Promise<number> {
+  const label = options?.label ?? `${command} ${args.join(" ")}`;
+  const timeoutMs = options?.timeoutMs ?? 5 * 60_000;
+  const bufferMs = options?.bufferMs ?? 50;
+
+  const buffered = createBufferedOutput(onOutput, bufferMs);
+  const proc = await container.spawn(command, args);
+
+  let outputSeen = false;
+  let lastOutputAt = Date.now();
+
+  proc.output
+    .pipeTo(
+      new WritableStream({
+        write(data) {
+          outputSeen = true;
+          lastOutputAt = Date.now();
+          buffered.write(data);
+        },
+      })
+    )
+    .catch(() => {
+      // ignore output stream errors
+    });
+
+  const noOutputHintTimer = setTimeout(() => {
+    if (!outputSeen) {
+      buffered.write("\n\x1b[33m… still working (no output yet)\x1b[0m\n");
+    }
+  }, 15_000);
+
+  const stallHintInterval = setInterval(() => {
+    const idleMs = Date.now() - lastOutputAt;
+    if (idleMs > 60_000) {
+      buffered.write(
+        `\n\x1b[33m… still running (${Math.round(idleMs / 1000)}s since last output)\x1b[0m\n`
+      );
+      lastOutputAt = Date.now();
+    }
+  }, 60_000);
+
+  let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutTimer = setTimeout(() => {
+      try {
+        proc.kill();
+      } catch {
+        // ignore
+      }
+      buffered.flush();
+      reject(new Error(`${label} timed out after ${Math.round(timeoutMs / 1000)}s`));
+    }, timeoutMs);
+  });
+
+  try {
+    const exitCode = await Promise.race([proc.exit, timeoutPromise]);
+    return exitCode;
+  } finally {
+    clearTimeout(noOutputHintTimer);
+    clearInterval(stallHintInterval);
+    if (timeoutTimer) clearTimeout(timeoutTimer);
+    buffered.flush();
+  }
+}
+
 async function findDevScript(container: WebContainer): Promise<string | null> {
   // Try to read package.json to find the right script
   try {
@@ -257,14 +403,14 @@ export async function startDevServer(
       /➜\s+local/i,
     ];
     
-    const output = createBufferedOutput(onOutput);
-    const print = (data: string) => output.write(data);
+    const serverOutput = createBufferedOutput(onOutput);
+    const serverPrint = (data: string) => serverOutput.write(data);
 
     serverProcess.output
       .pipeTo(
         new WritableStream({
           write(data) {
-            print(data);
+            serverPrint(data);
             
             // Fallback: detect server ready from output patterns
             if (!serverReadyFired) {
@@ -276,8 +422,8 @@ export async function startDevServer(
                   // Give the actual server-ready event a moment to fire
                   setTimeout(() => {
                     if (!serverReadyFired) {
-                      print("\n\x1b[33m⚠ Detected server ready from output (fallback)\x1b[0m\n");
-                      output.flush();
+                      serverPrint("\n\x1b[33m⚠ Detected server ready from output (fallback)\x1b[0m\n");
+                      serverOutput.flush();
                       handleServerReady(`http://localhost:${port}`, port);
                     }
                   }, 1000);
