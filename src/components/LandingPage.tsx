@@ -1,5 +1,5 @@
 import { useState, useEffect, memo } from "react";
-import { Github, Rocket, Settings, Zap, Code2, Terminal as TerminalIcon, Heart, CreditCard } from "lucide-react";
+import { Github, Rocket, Settings, Zap, Code2, Terminal as TerminalIcon, Heart, CreditCard, Cloud, Monitor } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SettingsModal } from "./SettingsModal";
@@ -10,7 +10,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { useWorkspaceStore } from "@/store/useWorkspaceStore";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { useWorkspaceStore, DeploymentMode } from "@/store/useWorkspaceStore";
 import {
   parseGitHubUrl,
   fetchRepoTree,
@@ -45,6 +46,7 @@ export function LandingPage() {
   const isLoadingRepo = useWorkspaceStore((s) => s.isLoadingRepo);
   const loadingProgress = useWorkspaceStore((s) => s.loadingProgress);
   const error = useWorkspaceStore((s) => s.error);
+  const deploymentMode = useWorkspaceStore((s) => s.deploymentMode);
   const setRepoInfo = useWorkspaceStore((s) => s.setRepoInfo);
   const setProjectInfo = useWorkspaceStore((s) => s.setProjectInfo);
   const setFileTree = useWorkspaceStore((s) => s.setFileTree);
@@ -57,6 +59,7 @@ export function LandingPage() {
   const appendTerminalOutput = useWorkspaceStore((s) => s.appendTerminalOutput);
   const clearTerminalOutput = useWorkspaceStore((s) => s.clearTerminalOutput);
   const setPreviewUrl = useWorkspaceStore((s) => s.setPreviewUrl);
+  const setDeploymentMode = useWorkspaceStore((s) => s.setDeploymentMode);
 
   const handleLaunch = async () => {
     if (!url.trim()) {
@@ -105,19 +108,27 @@ export function LandingPage() {
       setIsLoadingRepo(false);
       setLoadingProgress(null);
 
-      // Start WebContainer workflow with project type
-      runFullWorkflow(fsTree, {
-        onStatusChange: setContainerStatus,
-        onOutput: appendTerminalOutput,
-        onServerReady: setPreviewUrl,
-        onError: (err) => setError(err),
-      }, projectInfo.type);
+      // Only start WebContainer workflow if in webcontainer mode
+      if (deploymentMode === 'webcontainer') {
+        runFullWorkflow(fsTree, {
+          onStatusChange: setContainerStatus,
+          onOutput: appendTerminalOutput,
+          onServerReady: setPreviewUrl,
+          onError: (err) => setError(err),
+        }, projectInfo.type);
+      }
 
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to load repository";
       setError(message);
       setIsLoadingRepo(false);
       setLoadingProgress(null);
+    }
+  };
+
+  const handleModeChange = (value: string) => {
+    if (value) {
+      setDeploymentMode(value as DeploymentMode);
     }
   };
 
@@ -175,6 +186,38 @@ export function LandingPage() {
             </p>
           </div>
 
+          {/* Mode Toggle */}
+          <div className="flex justify-center animate-fade-in" style={{ animationDelay: "0.05s" }}>
+            <ToggleGroup 
+              type="single" 
+              value={deploymentMode} 
+              onValueChange={handleModeChange}
+              className="glass rounded-lg p-1"
+            >
+              <ToggleGroupItem 
+                value="webcontainer" 
+                className="gap-2 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground px-4"
+              >
+                <Monitor className="w-4 h-4" />
+                Quick Preview
+              </ToggleGroupItem>
+              <ToggleGroupItem 
+                value="railway" 
+                className="gap-2 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground px-4"
+              >
+                <Cloud className="w-4 h-4" />
+                Cloud Deploy
+              </ToggleGroupItem>
+            </ToggleGroup>
+          </div>
+
+          <p className="text-xs text-muted-foreground animate-fade-in" style={{ animationDelay: "0.05s" }}>
+            {deploymentMode === 'webcontainer' 
+              ? "Runs instantly in browser via WebContainers (Node.js only)"
+              : "Deploys to Railway cloud with full Docker support"
+            }
+          </p>
+
           {/* Input */}
           <div className="space-y-4 animate-fade-in" style={{ animationDelay: "0.1s" }}>
             <div className="flex gap-3">
@@ -201,8 +244,8 @@ export function LandingPage() {
                   </div>
                 ) : (
                   <div className="flex items-center gap-2">
-                    <Rocket className="w-5 h-5" />
-                    Launch
+                    {deploymentMode === 'railway' ? <Cloud className="w-5 h-5" /> : <Rocket className="w-5 h-5" />}
+                    {deploymentMode === 'railway' ? 'Deploy' : 'Launch'}
                   </div>
                 )}
               </Button>
