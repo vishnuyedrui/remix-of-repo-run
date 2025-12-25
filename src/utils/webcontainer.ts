@@ -3,18 +3,27 @@ import type { ProjectType } from "./projectDetection";
 
 let webcontainerInstance: WebContainer | null = null;
 let bootPromise: Promise<WebContainer> | null = null;
+let supportCheckLogged = false;
 
 // Check if WebContainers are supported in this environment
 export function checkWebContainerSupport(): { supported: boolean; reason?: string } {
-  console.log("[WebContainer] Checking support...");
-  console.log("[WebContainer] SharedArrayBuffer available:", typeof SharedArrayBuffer !== "undefined");
-  console.log("[WebContainer] WebAssembly available:", typeof WebAssembly !== "undefined");
-  console.log("[WebContainer] crossOriginIsolated:", typeof crossOriginIsolated !== "undefined" ? crossOriginIsolated : "N/A");
-  
+  const sharedArrayBufferAvailable = typeof SharedArrayBuffer !== "undefined";
+  const webAssemblyAvailable = typeof WebAssembly !== "undefined";
+  const coi = typeof crossOriginIsolated !== "undefined" ? crossOriginIsolated : undefined;
+
+  // Avoid spamming the console on every render
+  if (!supportCheckLogged) {
+    supportCheckLogged = true;
+    console.log("[WebContainer] Checking support...");
+    console.log("[WebContainer] SharedArrayBuffer available:", sharedArrayBufferAvailable);
+    console.log("[WebContainer] WebAssembly available:", webAssemblyAvailable);
+    console.log("[WebContainer] crossOriginIsolated:", coi ?? "N/A");
+  }
+
   // Check for SharedArrayBuffer (required for WebContainers)
-  if (typeof SharedArrayBuffer === "undefined") {
-    const reason = "SharedArrayBuffer is not available. This usually means the page is missing Cross-Origin-Isolation headers (COOP/COEP).";
-    console.error("[WebContainer] Support check failed:", reason);
+  if (!sharedArrayBufferAvailable) {
+    const reason =
+      "SharedArrayBuffer is not available. This usually means the page is missing Cross-Origin-Isolation headers (COOP/COEP).";
     return {
       supported: false,
       reason,
@@ -22,16 +31,14 @@ export function checkWebContainerSupport(): { supported: boolean; reason?: strin
   }
 
   // Check for basic WebAssembly support
-  if (typeof WebAssembly === "undefined") {
+  if (!webAssemblyAvailable) {
     const reason = "WebAssembly is not supported in this browser.";
-    console.error("[WebContainer] Support check failed:", reason);
     return {
       supported: false,
       reason,
     };
   }
 
-  console.log("[WebContainer] Support check passed!");
   return { supported: true };
 }
 
@@ -184,33 +191,45 @@ export async function startDevServer(
   };
   
   try {
-    // Install dependencies
-    onStatusChange?.("installing");
-    console.log("[WebContainer] Starting npm install...");
-    onOutput?.("\x1b[36m➜ Running npm install...\x1b[0m\n\n");
-    
-    const installExitCode = await runCommand(
-      container,
-      "npm",
-      ["install"],
-      (data) => {
-        console.log("[WebContainer] npm install output:", data.trim());
-        onOutput?.(data);
-      }
-    );
-    
-    console.log("[WebContainer] npm install exit code:", installExitCode);
-    
-    if (installExitCode !== 0) {
-      const errorMsg = `npm install failed with exit code ${installExitCode}. Check terminal for details.`;
-      console.error("[WebContainer]", errorMsg);
-      onError?.(errorMsg);
+    const output = createBufferedOutput(onOutput);
+    const print = (data: string) => output.write(data);
+
+    // Preflight: package.json + common unsupported dependency patterns
+    const pkg = await readJsonFile(container, "package.json");
+    if (pkg && hasGitSshDependencies(pkg)) {
       onStatusChange?.("error");
+      onError?.(
+        "This project uses git+ssh dependencies (e.g. git@... or ssh://...). Those can’t be installed in the in-browser container."
+      );
+      print("\x1b[31m✗ Unsupported dependency source detected (git+ssh).\x1b[0m\n");
+      output.flush();
       return;
     }
-    
-    console.log("[WebContainer] Dependencies installed successfully");
-    onOutput?.("\n\x1b[32m✓ Dependencies installed successfully!\x1b[0m\n\n");
+
+    // Install dependencies
+    onStatusChange?.("installing");
+
+    const hasPackageLock = await fileExists(container, "package-lock.json");
+    const npmArgs = hasPackageLock ? ["ci"] : ["install"];
+    npmArgs.push("--no-audit", "--no-fund");
+
+    print(`\x1b[36m➜ Running npm ${hasPackageLock ? "ci" : "install"}...\x1b[0m\n\n`);
+
+    const installExitCode = await runCommandWithTimeout(container, "npm", npmArgs, print, {
+      label: "Dependency installation",
+      timeoutMs: 5 * 60_000,
+      bufferMs: 75,
+    });
+
+    if (installExitCode !== 0) {
+      onError?.(`Dependency install failed (exit code ${installExitCode}). Check terminal for details.`);
+      onStatusChange?.("error");
+      output.flush();
+      return;
+    }
+
+    print("\n\x1b[32m✓ Dependencies installed successfully!\x1b[0m\n\n");
+    output.flush();
     
     // Find the right dev script
     const devScript = await findDevScript(container);
@@ -238,32 +257,40 @@ export async function startDevServer(
       /➜\s+local/i,
     ];
     
-    serverProcess.output.pipeTo(
-      new WritableStream({
-        write(data) {
-          onOutput?.(data);
-          
-          // Fallback: detect server ready from output patterns
-          if (!serverReadyFired) {
-            for (const pattern of readyPatterns) {
-              if (pattern.test(data)) {
-                // Extract port if present, construct a fallback URL
-                const portMatch = data.match(/(?:localhost|127\.0\.0\.1):(\d+)/i);
-                const port = portMatch ? parseInt(portMatch[1], 10) : 3000;
-                // Give the actual server-ready event a moment to fire
-                setTimeout(() => {
-                  if (!serverReadyFired) {
-                    onOutput?.("\n\x1b[33m⚠ Detected server ready from output (fallback)\x1b[0m\n");
-                    handleServerReady(`http://localhost:${port}`, port);
-                  }
-                }, 1000);
-                break;
+    const output = createBufferedOutput(onOutput);
+    const print = (data: string) => output.write(data);
+
+    serverProcess.output
+      .pipeTo(
+        new WritableStream({
+          write(data) {
+            print(data);
+            
+            // Fallback: detect server ready from output patterns
+            if (!serverReadyFired) {
+              for (const pattern of readyPatterns) {
+                if (pattern.test(data)) {
+                  // Extract port if present, construct a fallback URL
+                  const portMatch = data.match(/(?:localhost|127\.0\.0\.1):(\d+)/i);
+                  const port = portMatch ? parseInt(portMatch[1], 10) : 3000;
+                  // Give the actual server-ready event a moment to fire
+                  setTimeout(() => {
+                    if (!serverReadyFired) {
+                      print("\n\x1b[33m⚠ Detected server ready from output (fallback)\x1b[0m\n");
+                      output.flush();
+                      handleServerReady(`http://localhost:${port}`, port);
+                    }
+                  }, 1000);
+                  break;
+                }
               }
             }
-          }
-        },
-      })
-    );
+          },
+        })
+      )
+      .catch(() => {
+        // ignore output pipe errors
+      });
     
     // Listen for server ready event
     container.on("server-ready", (port, url) => {
