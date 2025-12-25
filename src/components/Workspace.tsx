@@ -140,8 +140,9 @@ import { FileTree } from "./FileTree";
 import { LazyCodeEditor } from "./LazyCodeEditor";
 import { Preview } from "./Preview";
 import { LazyTerminal } from "./LazyTerminal";
+import { RailwayDeployment } from "./RailwayDeployment";
 import { useWorkspaceStore } from "@/store/useWorkspaceStore";
-import { ArrowLeft, Github, Zap } from "lucide-react";
+import { ArrowLeft, Github, Zap, Cloud } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { teardownWebContainer } from "@/utils/webcontainer";
@@ -150,6 +151,7 @@ import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/componen
 export function Workspace() {
   const repoInfo = useWorkspaceStore((s) => s.repoInfo);
   const projectInfo = useWorkspaceStore((s) => s.projectInfo);
+  const deploymentMode = useWorkspaceStore((s) => s.deploymentMode);
   const reset = useWorkspaceStore((s) => s.reset);
   const setView = useWorkspaceStore((s) => s.setView);
   const setContainerStatus = useWorkspaceStore((s) => s.setContainerStatus);
@@ -196,6 +198,12 @@ export function Workspace() {
 
         {repoInfo && (
           <div className="flex items-center gap-3">
+            {deploymentMode === 'railway' && (
+              <Badge variant="outline" className="text-xs gap-1">
+                <Cloud className="w-3 h-3" />
+                Railway
+              </Badge>
+            )}
             {projectInfo && (
               <Badge 
                 variant={projectInfo.canRun ? "default" : "secondary"}
@@ -233,21 +241,25 @@ export function Workspace() {
 
         <ResizableHandle />
 
-        {/* Right - Preview & Terminal */}
+        {/* Right - Preview & Terminal or Railway Deployment */}
         <ResizablePanel defaultSize={30} minSize={20} className="flex flex-col">
-          <ResizablePanelGroup direction="vertical" className="flex-1">
-            {/* Preview */}
-            <ResizablePanel defaultSize={70} minSize={30} className="min-h-0">
-              <Preview />
-            </ResizablePanel>
+          {deploymentMode === 'railway' ? (
+            <RailwayDeployment />
+          ) : (
+            <ResizablePanelGroup direction="vertical" className="flex-1">
+              {/* Preview */}
+              <ResizablePanel defaultSize={70} minSize={30} className="min-h-0">
+                <Preview />
+              </ResizablePanel>
 
-            <ResizableHandle />
+              <ResizableHandle />
 
-            {/* Terminal */}
-            <ResizablePanel defaultSize={30} minSize={20}>
-              <LazyTerminal />
-            </ResizablePanel>
-          </ResizablePanelGroup>
+              {/* Terminal */}
+              <ResizablePanel defaultSize={30} minSize={20}>
+                <LazyTerminal />
+              </ResizablePanel>
+            </ResizablePanelGroup>
+          )}
         </ResizablePanel>
       </ResizablePanelGroup>
     </div>

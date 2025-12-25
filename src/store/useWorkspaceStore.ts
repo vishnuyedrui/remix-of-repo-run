@@ -3,6 +3,9 @@ import type { FileTreeNode, ParsedGitHubUrl, FileSystemTree } from "@/utils/gith
 import type { ContainerStatus } from "@/utils/webcontainer";
 import type { ProjectInfo } from "@/utils/projectDetection";
 
+export type DeploymentMode = 'webcontainer' | 'railway';
+export type RailwayStatus = 'idle' | 'creating' | 'deploying' | 'ready' | 'error';
+
 interface WorkspaceState {
   // Repository info
   repoInfo: ParsedGitHubUrl | null;
@@ -25,6 +28,15 @@ interface WorkspaceState {
   terminalOutput: string;
   previewUrl: string | null;
   fileSystemTree: FileSystemTree | null;
+  
+  // Railway deployment
+  deploymentMode: DeploymentMode;
+  railwayStatus: RailwayStatus;
+  railwayUrl: string | null;
+  railwayProjectId: string | null;
+  railwayServiceId: string | null;
+  railwayEnvironmentId: string | null;
+  deploymentLogs: string[];
   
   // Loading states
   isLoadingRepo: boolean;
@@ -53,6 +65,17 @@ interface WorkspaceState {
   setLoadingProgress: (progress: { current: number; total: number; fileName: string } | null) => void;
   setError: (error: string | null) => void;
   setView: (view: "landing" | "workspace") => void;
+  
+  // Railway actions
+  setDeploymentMode: (mode: DeploymentMode) => void;
+  setRailwayStatus: (status: RailwayStatus) => void;
+  setRailwayUrl: (url: string | null) => void;
+  setRailwayProjectId: (id: string | null) => void;
+  setRailwayServiceId: (id: string | null) => void;
+  setRailwayEnvironmentId: (id: string | null) => void;
+  appendDeploymentLog: (log: string) => void;
+  clearDeploymentLogs: () => void;
+  
   reset: () => void;
 }
 
@@ -69,6 +92,16 @@ const initialState = {
   terminalOutput: "",
   previewUrl: null,
   fileSystemTree: null,
+  
+  // Railway initial state
+  deploymentMode: "webcontainer" as DeploymentMode,
+  railwayStatus: "idle" as RailwayStatus,
+  railwayUrl: null,
+  railwayProjectId: null,
+  railwayServiceId: null,
+  railwayEnvironmentId: null,
+  deploymentLogs: [] as string[],
+  
   isLoadingRepo: false,
   loadingProgress: null,
   error: null,
@@ -131,5 +164,28 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   
   setView: (view) => set({ view: view }),
   
-  reset: () => set({ ...initialState, expandedFolders: new Set(), fileContentCache: new Map() }),
+  // Railway actions
+  setDeploymentMode: (mode) => set({ deploymentMode: mode }),
+  
+  setRailwayStatus: (status) => set({ railwayStatus: status }),
+  
+  setRailwayUrl: (url) => set({ railwayUrl: url }),
+  
+  setRailwayProjectId: (id) => set({ railwayProjectId: id }),
+  
+  setRailwayServiceId: (id) => set({ railwayServiceId: id }),
+  
+  setRailwayEnvironmentId: (id) => set({ railwayEnvironmentId: id }),
+  
+  appendDeploymentLog: (log) =>
+    set((state) => ({ deploymentLogs: [...state.deploymentLogs, log] })),
+  
+  clearDeploymentLogs: () => set({ deploymentLogs: [] }),
+  
+  reset: () => set({ 
+    ...initialState, 
+    expandedFolders: new Set(), 
+    fileContentCache: new Map(),
+    deploymentLogs: []
+  }),
 }));
