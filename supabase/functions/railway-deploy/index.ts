@@ -76,7 +76,37 @@ serve(async (req) => {
         const repoFullName = `${owner}/${repo.replace(/\.git$/, '')}`;
         console.log('Creating project for repo:', repoFullName);
 
-        // Step 1: Create a new project
+        // Step 0: Get user's teams to find workspace ID
+        const getTeamsQuery = `
+          query me {
+            me {
+              teams {
+                edges {
+                  node {
+                    id
+                    name
+                  }
+                }
+              }
+            }
+          }
+        `;
+
+        const teamsResult = await graphqlRequest(getTeamsQuery, {});
+        const teams = teamsResult.me?.teams?.edges || [];
+        
+        if (teams.length === 0) {
+          console.error('No teams found for user');
+          return new Response(
+            JSON.stringify({ error: 'No Railway teams/workspaces found. Please create a team in Railway dashboard first.' }),
+            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+
+        const teamId = teams[0].node.id;
+        console.log('Using team/workspace:', teamId, teams[0].node.name);
+
+        // Step 1: Create a new project with teamId
         const createProjectQuery = `
           mutation projectCreate($input: ProjectCreateInput!) {
             projectCreate(input: $input) {
@@ -89,6 +119,7 @@ serve(async (req) => {
         const projectResult = await graphqlRequest(createProjectQuery, {
           input: {
             name: repo.replace(/\.git$/, ''),
+            teamId: teamId,
           }
         });
 
