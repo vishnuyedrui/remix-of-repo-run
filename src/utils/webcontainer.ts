@@ -74,16 +74,16 @@ export async function bootWebContainer(): Promise<WebContainer> {
   const attemptBoot = async (attempt: number = 1): Promise<WebContainer> => {
     console.log(`[WebContainer] Boot attempt ${attempt} starting...`);
     try {
-      // Race the boot against a 30-second timeout (increased from 6s for slower connections)
+      // Race the boot against a 60-second timeout (WebContainer first boot can be slow)
       const timeoutPromise = new Promise<never>((_, reject) => {
         setTimeout(() => {
           reject(new Error("Boot timed out"));
-        }, 30000);
+        }, 60000);
       });
       
-      console.log("[WebContainer] Calling WebContainer.boot()...");
+      console.log("[WebContainer] Calling WebContainer.boot() with coep: credentialless...");
       const container = await Promise.race([
-        WebContainer.boot(),
+        WebContainer.boot({ coep: "credentialless" }),
         timeoutPromise
       ]);
       
@@ -91,9 +91,9 @@ export async function bootWebContainer(): Promise<WebContainer> {
       return container;
     } catch (error) {
       console.error(`[WebContainer] Boot attempt ${attempt} failed:`, error);
-      // Retry once on timeout
-      if (attempt < 2 && error instanceof Error && error.message.includes("timed out")) {
-        console.log("[WebContainer] Retrying boot...");
+      // Retry up to 2 times on timeout
+      if (attempt < 3 && error instanceof Error && error.message.includes("timed out")) {
+        console.log(`[WebContainer] Retrying boot (attempt ${attempt + 1})...`);
         return attemptBoot(attempt + 1);
       }
       throw new Error("Boot timed out. Please reload or check if your browser supports WebContainers (Chrome/Edge required).");
