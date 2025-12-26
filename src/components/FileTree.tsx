@@ -136,6 +136,12 @@ const TreeNode = memo(function TreeNode({ node, depth }: TreeNodeProps) {
 
 export const FileTree = memo(function FileTree() {
   const fileTree = useWorkspaceStore((s) => s.fileTree);
+  const isLoadingRepo = useWorkspaceStore((s) => s.isLoadingRepo);
+
+  // Show skeleton while loading
+  if (isLoadingRepo || fileTree.length === 0) {
+    return <FileTreeSkeleton />;
+  }
 
   return (
     <div className="h-full flex flex-col">
@@ -155,3 +161,50 @@ export const FileTree = memo(function FileTree() {
     </div>
   );
 });
+
+// Inline FileTree Skeleton to avoid circular imports
+function FileTreeSkeleton() {
+  const items = [
+    { type: "folder", indent: 0, width: "70%" },
+    { type: "file", indent: 1, width: "60%" },
+    { type: "file", indent: 1, width: "80%" },
+    { type: "file", indent: 1, width: "55%" },
+    { type: "folder", indent: 0, width: "65%" },
+    { type: "file", indent: 1, width: "75%" },
+    { type: "file", indent: 1, width: "50%" },
+    { type: "folder", indent: 0, width: "60%" },
+  ];
+
+  return (
+    <div className="h-full flex flex-col">
+      <div className="h-10 px-4 flex items-center border-b border-border">
+        <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+          Explorer
+        </span>
+      </div>
+      
+      <div className="flex-1 py-2 px-2 space-y-1 overflow-hidden">
+        {items.map((item, index) => (
+          <div
+            key={index}
+            className="flex items-center gap-2 py-1 px-2 animate-pulse"
+            style={{ 
+              paddingLeft: `${item.indent * 12 + 8}px`,
+              animationDelay: `${index * 50}ms`
+            }}
+          >
+            {item.type === "folder" ? (
+              <Folder className="w-4 h-4 text-muted-foreground/30" />
+            ) : (
+              <File className="w-4 h-4 text-muted-foreground/20" />
+            )}
+            <div 
+              className="h-3 rounded bg-muted animate-pulse"
+              style={{ width: item.width }}
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
