@@ -17,6 +17,38 @@ interface DeployRequest {
   deploymentId?: string;
 }
 
+// Validate GitHub owner/repo names match GitHub's allowed patterns
+function isValidGitHubName(name: string): boolean {
+  if (!name || name.length === 0 || name.length > 100) return false;
+  const validPattern = /^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$|^[a-zA-Z0-9]$/;
+  if (!validPattern.test(name)) return false;
+  if (name.includes('..')) return false;
+  return true;
+}
+
+// Map internal errors to safe user-friendly messages
+function getSafeErrorMessage(error: Error): string {
+  const errorMsg = error.message.toLowerCase();
+  
+  if (errorMsg.includes('unauthorized') || errorMsg.includes('authentication') || errorMsg.includes('forbidden')) {
+    return 'Railway authentication failed. Please check your configuration.';
+  }
+  if (errorMsg.includes('workspace') || errorMsg.includes('team')) {
+    return 'Railway workspace not found. Please verify your workspace configuration.';
+  }
+  if (errorMsg.includes('repository') || errorMsg.includes('repo') || errorMsg.includes('not found')) {
+    return 'Unable to access the repository. Verify it exists and is public.';
+  }
+  if (errorMsg.includes('quota') || errorMsg.includes('limit') || errorMsg.includes('rate')) {
+    return 'Deployment quota exceeded. Please try again later.';
+  }
+  if (errorMsg.includes('invalid') || errorMsg.includes('validation')) {
+    return 'Invalid request. Please check your input and try again.';
+  }
+  
+  return 'Deployment failed. Please check your configuration and try again.';
+}
+
 serve(async (req) => {
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
@@ -76,7 +108,8 @@ serve(async (req) => {
 
       const data = await response.json();
       if (data.errors) {
-        console.error('GraphQL errors:', JSON.stringify(data.errors));
+        // Log detailed error for server-side debugging only
+        console.error('Railway GraphQL error:', JSON.stringify(data.errors));
         throw new Error(data.errors[0]?.message || 'GraphQL request failed');
       }
       return data.data;
@@ -91,6 +124,14 @@ serve(async (req) => {
           );
         }
 
+        // Validate URL length
+        if (body.githubUrl.trim().length > 500) {
+          return new Response(
+            JSON.stringify({ error: 'Invalid GitHub URL' }),
+            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+
         // Parse GitHub URL
         const match = body.githubUrl.match(/github\.com\/([^/]+)\/([^/]+)/);
         if (!match) {
@@ -101,7 +142,17 @@ serve(async (req) => {
         }
 
         const [, owner, repo] = match;
-        const repoFullName = `${owner}/${repo.replace(/\.git$/, '')}`;
+        const cleanRepo = repo.replace(/\.git$/, '');
+        
+        // Validate owner and repo names match GitHub's allowed patterns
+        if (!isValidGitHubName(owner) || !isValidGitHubName(cleanRepo)) {
+          return new Response(
+            JSON.stringify({ error: 'Invalid GitHub owner or repository name' }),
+            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+
+        const repoFullName = `${owner}/${cleanRepo}`;
         console.log('Creating project for repo:', repoFullName);
 
         // Get workspace ID from secret
@@ -127,7 +178,7 @@ serve(async (req) => {
 
         const projectResult = await graphqlRequest(createProjectQuery, {
           input: {
-            name: repo.replace(/\.git$/, ''),
+            name: cleanRepo,
             teamId: workspaceId,
           }
         });
@@ -173,7 +224,7 @@ serve(async (req) => {
         const serviceResult = await graphqlRequest(createServiceQuery, {
           input: {
             projectId,
-            name: repo.replace(/\.git$/, ''),
+            name: cleanRepo,
             source: {
               repo: repoFullName
             }
@@ -310,10 +361,12 @@ serve(async (req) => {
         );
     }
   } catch (error) {
+    // Log detailed error for server-side debugging
     console.error('Railway deploy error:', error);
-    const message = error instanceof Error ? error.message : 'An error occurred';
+    // Return safe, generic message to client
+    const safeMessage = error instanceof Error ? getSafeErrorMessage(error) : 'An error occurred';
     return new Response(
-      JSON.stringify({ error: message }),
+      JSON.stringify({ error: safeMessage }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
