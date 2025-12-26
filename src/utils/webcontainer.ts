@@ -117,13 +117,22 @@ export async function mountFiles(
   files: FileSystemTree,
   timeoutMs: number = 60000
 ): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
   const timeoutPromise = new Promise<never>((_, reject) => {
-    setTimeout(() => {
-      reject(new Error(`Mounting files timed out after ${timeoutMs / 1000}s. The repository may be too large.`));
+    timer = setTimeout(() => {
+      reject(
+        new Error(
+          `Mounting files timed out after ${timeoutMs / 1000}s. The repository may be too large.`
+        )
+      );
     }, timeoutMs);
   });
 
-  await Promise.race([container.mount(files), timeoutPromise]);
+  try {
+    await Promise.race([container.mount(files), timeoutPromise]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 export async function runCommand(
@@ -174,8 +183,9 @@ function createBufferedOutput(
 // Helper: check if a file exists in the container
 async function fileExists(container: WebContainer, path: string): Promise<boolean> {
   try {
-    const p = await container.spawn("test", ["-f", path]);
-    return (await p.exit) === 0;
+    // WebContainer FS doesn't expose stat() in all versions; readFile is the simplest existence check.
+    await container.fs.readFile(path, "utf-8");
+    return true;
   } catch {
     return false;
   }
@@ -184,19 +194,7 @@ async function fileExists(container: WebContainer, path: string): Promise<boolea
 // Helper: read and parse a JSON file from the container
 async function readJsonFile(container: WebContainer, path: string): Promise<any | null> {
   try {
-    const proc = await container.spawn("cat", [path]);
-    let content = "";
-
-    await proc.output.pipeTo(
-      new WritableStream({
-        write(data) {
-          content += data;
-        },
-      })
-    );
-
-    const code = await proc.exit;
-    if (code !== 0) return null;
+    const content = await container.fs.readFile(path, "utf-8");
     return JSON.parse(content);
   } catch {
     return null;
@@ -292,37 +290,22 @@ async function runCommandWithTimeout(
 }
 
 async function findDevScript(container: WebContainer): Promise<string | null> {
-  // Try to read package.json to find the right script
-  try {
-    const packageJsonProcess = await container.spawn("cat", ["package.json"]);
-    let packageJsonContent = "";
-    
-    await packageJsonProcess.output.pipeTo(
-      new WritableStream({
-        write(data) {
-          packageJsonContent += data;
-        },
-      })
-    );
-    
-    const exitCode = await packageJsonProcess.exit;
-    if (exitCode !== 0) return null;
-    
-    const packageJson = JSON.parse(packageJsonContent);
-    const scripts = packageJson.scripts || {};
-    
-    // Check for common dev script names in order of preference
-    const devScripts = ["dev", "start", "serve", "develop", "watch"];
-    for (const script of devScripts) {
-      if (scripts[script]) {
-        return script;
-      }
+  // Read package.json to find the right script
+  const pkg = await readJsonFile(container, "package.json");
+  if (!pkg) return null;
+
+  const scripts: Record<string, unknown> = pkg.scripts || {};
+
+  // Check for common dev script names in order of preference
+  const devScripts = ["dev", "start", "serve", "develop", "watch"];
+  for (const script of devScripts) {
+    const value = scripts[script];
+    if (typeof value === "string" && value.trim().length > 0) {
+      return script;
     }
-    
-    return null;
-  } catch {
-    return null;
   }
+
+  return null;
 }
 
 export async function startDevServer(
