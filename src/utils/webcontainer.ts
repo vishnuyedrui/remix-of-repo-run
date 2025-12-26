@@ -114,9 +114,16 @@ export async function bootWebContainer(): Promise<WebContainer> {
 
 export async function mountFiles(
   container: WebContainer,
-  files: FileSystemTree
+  files: FileSystemTree,
+  timeoutMs: number = 60000
 ): Promise<void> {
-  await container.mount(files);
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    setTimeout(() => {
+      reject(new Error(`Mounting files timed out after ${timeoutMs / 1000}s. The repository may be too large.`));
+    }, timeoutMs);
+  });
+
+  await Promise.race([container.mount(files), timeoutPromise]);
 }
 
 export async function runCommand(
@@ -764,12 +771,27 @@ async function serveStaticSite(
   }
 }
 
+// Count files in a FileSystemTree
+function countFilesInTree(tree: FileSystemTree): number {
+  let count = 0;
+  for (const key in tree) {
+    const node = tree[key];
+    if ('file' in node) {
+      count++;
+    } else if ('directory' in node) {
+      count += countFilesInTree(node.directory);
+    }
+  }
+  return count;
+}
+
 export async function runFullWorkflow(
   files: FileSystemTree,
   callbacks: ContainerCallbacks,
   projectType: ProjectType = "nodejs"
 ): Promise<void> {
   const { onStatusChange, onOutput, onError } = callbacks;
+  const fileCount = countFilesInTree(files);
 
   // For non-runnable projects, just mount files
   if (projectType !== "nodejs" && projectType !== "static") {
@@ -781,10 +803,12 @@ export async function runFullWorkflow(
       onOutput?.("\x1b[32m✓ WebContainer booted!\x1b[0m\n\n");
 
       onStatusChange?.("mounting");
-      onOutput?.("\x1b[36m➜ Mounting files...\x1b[0m\n");
+      onOutput?.(`\x1b[36m➜ Mounting ${fileCount} files...\x1b[0m\n`);
 
+      const mountStart = Date.now();
       await mountFiles(container, files);
-      onOutput?.("\x1b[32m✓ Files mounted!\x1b[0m\n\n");
+      const mountDuration = ((Date.now() - mountStart) / 1000).toFixed(1);
+      onOutput?.(`\x1b[32m✓ Files mounted in ${mountDuration}s!\x1b[0m\n\n`);
 
       onOutput?.("\x1b[33m⚠ This project type cannot be executed in the browser.\x1b[0m\n");
       onOutput?.("\x1b[33m  Code browsing is available in the file tree.\x1b[0m\n");
@@ -804,15 +828,22 @@ export async function runFullWorkflow(
     onOutput?.("\x1b[36m➜ Booting WebContainer...\x1b[0m\n");
     onOutput?.("\x1b[33m  (This requires Cross-Origin-Isolation headers)\x1b[0m\n\n");
     
+    const bootStart = Date.now();
     const container = await bootWebContainer();
-    onOutput?.("\x1b[32m✓ WebContainer booted successfully!\x1b[0m\n\n");
+    const bootDuration = ((Date.now() - bootStart) / 1000).toFixed(1);
+    onOutput?.(`\x1b[32m✓ WebContainer booted in ${bootDuration}s!\x1b[0m\n\n`);
     
     // Mount
     onStatusChange?.("mounting");
-    onOutput?.("\x1b[36m➜ Mounting files to virtual filesystem...\x1b[0m\n");
+    onOutput?.(`\x1b[36m➜ Mounting ${fileCount} files to virtual filesystem...\x1b[0m\n`);
+    if (fileCount > 200) {
+      onOutput?.("\x1b[33m  Large repository detected - this may take a moment...\x1b[0m\n");
+    }
     
+    const mountStart = Date.now();
     await mountFiles(container, files);
-    onOutput?.("\x1b[32m✓ Files mounted!\x1b[0m\n\n");
+    const mountDuration = ((Date.now() - mountStart) / 1000).toFixed(1);
+    onOutput?.(`\x1b[32m✓ Files mounted in ${mountDuration}s!\x1b[0m\n\n`);
     
     // Start appropriate server based on project type
     if (projectType === "static") {
@@ -829,6 +860,8 @@ export async function runFullWorkflow(
       onError?.("WebContainers require Cross-Origin-Isolation headers. Please ensure the server is configured correctly.");
     } else if (message.includes("boot")) {
       onError?.("Failed to boot WebContainer. This feature requires a modern browser with WebAssembly support.");
+    } else if (message.includes("timed out") && message.includes("Mount")) {
+      onError?.("Mounting files timed out. Try a smaller repository or check your connection.");
     } else {
       onError?.(message);
     }
