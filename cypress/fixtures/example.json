@@ -1,0 +1,5 @@
+{
+  "name": "Example fixture",
+  "email": "test@example.com",
+  "description": "This is an example fixture file for Cypress tests"
+}
