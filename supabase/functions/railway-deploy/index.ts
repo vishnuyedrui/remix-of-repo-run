@@ -1,16 +1,16 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-const RAILWAY_API_URL = 'https://backboard.railway.app/graphql/v2';
+// Updated to the correct Railway API endpoint
+const RAILWAY_API_URL = 'https://backboard.railway.com/graphql/v2';
 
 interface DeployRequest {
-  action: 'create' | 'deploy' | 'status' | 'delete';
+  action: 'create' | 'deploy' | 'status' | 'delete' | 'diagnose';
   githubUrl?: string;
   projectId?: string;
   serviceId?: string;
@@ -24,29 +24,6 @@ function isValidGitHubName(name: string): boolean {
   if (!validPattern.test(name)) return false;
   if (name.includes('..')) return false;
   return true;
-}
-
-// Map internal errors to safe user-friendly messages
-function getSafeErrorMessage(error: Error): string {
-  const errorMsg = error.message.toLowerCase();
-  
-  if (errorMsg.includes('unauthorized') || errorMsg.includes('authentication') || errorMsg.includes('forbidden')) {
-    return 'Railway authentication failed. Please check your configuration.';
-  }
-  if (errorMsg.includes('workspace') || errorMsg.includes('team')) {
-    return 'Railway workspace not found. Please verify your workspace configuration.';
-  }
-  if (errorMsg.includes('repository') || errorMsg.includes('repo') || errorMsg.includes('not found')) {
-    return 'Unable to access the repository. Verify it exists and is public.';
-  }
-  if (errorMsg.includes('quota') || errorMsg.includes('limit') || errorMsg.includes('rate')) {
-    return 'Deployment quota exceeded. Please try again later.';
-  }
-  if (errorMsg.includes('invalid') || errorMsg.includes('validation')) {
-    return 'Invalid request. Please check your input and try again.';
-  }
-  
-  return 'Deployment failed. Please check your configuration and try again.';
 }
 
 serve(async (req) => {
@@ -72,9 +49,12 @@ serve(async (req) => {
     const body: DeployRequest = await req.json();
     console.log('Railway deploy request:', body.action);
 
+    // GraphQL request helper with token-mode handling
     const graphqlRequest = async (query: string, variables: Record<string, unknown> = {}) => {
       console.log('GraphQL request:', query.slice(0, 100) + '...');
-      const response = await fetch(RAILWAY_API_URL, {
+      
+      // Try with Bearer token first (account token style)
+      let response = await fetch(RAILWAY_API_URL, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${railwayToken}`,
@@ -83,16 +63,107 @@ serve(async (req) => {
         body: JSON.stringify({ query, variables }),
       });
 
-      const data = await response.json();
+      let data = await response.json();
+      
+      // If we get an auth error, try with Team-Access-Token header (team token style)
+      if (data.errors && data.errors.some((e: { message: string }) => 
+        e.message.toLowerCase().includes('unauthorized') || 
+        e.message.toLowerCase().includes('forbidden') ||
+        e.message.toLowerCase().includes('authentication')
+      )) {
+        console.log('Bearer token failed, trying Team-Access-Token header...');
+        response = await fetch(RAILWAY_API_URL, {
+          method: 'POST',
+          headers: {
+            'Team-Access-Token': railwayToken,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ query, variables }),
+        });
+        data = await response.json();
+      }
+
       if (data.errors) {
         // Log detailed error for server-side debugging only
         console.error('Railway GraphQL error:', JSON.stringify(data.errors));
-        throw new Error(data.errors[0]?.message || 'GraphQL request failed');
+        const errorMsg = data.errors[0]?.message || 'GraphQL request failed';
+        throw new Error(errorMsg);
       }
       return data.data;
     };
 
     switch (body.action) {
+      // New diagnose action to check token access and workspace validity
+      case 'diagnose': {
+        const workspaceId = Deno.env.get('RAILWAY_WORKSPACE_ID');
+        const results: {
+          tokenValid: boolean;
+          workspaceConfigured: boolean;
+          workspaceId: string | null;
+          workspaceAccessible: boolean;
+          workspaceName: string | null;
+          availableTeams: Array<{ id: string; name: string }>;
+          error: string | null;
+        } = {
+          tokenValid: false,
+          workspaceConfigured: !!workspaceId,
+          workspaceId: workspaceId || null,
+          workspaceAccessible: false,
+          workspaceName: null,
+          availableTeams: [],
+          error: null,
+        };
+
+        try {
+          // First, try to get the current user/token info
+          const meQuery = `
+            query me {
+              me {
+                id
+                email
+                teams {
+                  edges {
+                    node {
+                      id
+                      name
+                    }
+                  }
+                }
+              }
+            }
+          `;
+
+          const meResult = await graphqlRequest(meQuery);
+          results.tokenValid = true;
+          
+          // Extract available teams
+          if (meResult.me?.teams?.edges) {
+            results.availableTeams = meResult.me.teams.edges.map((e: { node: { id: string; name: string } }) => ({
+              id: e.node.id,
+              name: e.node.name,
+            }));
+          }
+
+          // Check if configured workspace is accessible
+          if (workspaceId) {
+            const teamMatch = results.availableTeams.find(t => t.id === workspaceId);
+            if (teamMatch) {
+              results.workspaceAccessible = true;
+              results.workspaceName = teamMatch.name;
+            } else {
+              results.error = `Workspace ID "${workspaceId}" not found in accessible teams. Available: ${results.availableTeams.map(t => `${t.name} (${t.id})`).join(', ') || 'none'}`;
+            }
+          }
+        } catch (err) {
+          results.error = err instanceof Error ? err.message : 'Unknown error during diagnosis';
+        }
+
+        return new Response(
+          JSON.stringify(results),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
       case 'create': {
         if (!body.githubUrl) {
           return new Response(
@@ -138,7 +209,7 @@ serve(async (req) => {
           console.error('RAILWAY_WORKSPACE_ID not configured');
           return new Response(
             JSON.stringify({ error: 'Railway workspace ID not configured. Please add RAILWAY_WORKSPACE_ID secret.' }),
-            { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
           );
         }
         console.log('Using workspace ID:', workspaceId);
@@ -153,12 +224,27 @@ serve(async (req) => {
           }
         `;
 
-        const projectResult = await graphqlRequest(createProjectQuery, {
-          input: {
-            name: cleanRepo,
-            teamId: workspaceId,
+        let projectResult;
+        try {
+          projectResult = await graphqlRequest(createProjectQuery, {
+            input: {
+              name: cleanRepo,
+              teamId: workspaceId,
+            }
+          });
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : 'Unknown error';
+          // Provide more helpful error for workspace issues
+          if (errMsg.toLowerCase().includes('workspace') || errMsg.toLowerCase().includes('team')) {
+            return new Response(
+              JSON.stringify({ 
+                error: `Cannot access workspace. Run "Diagnose" to check your token's team access. Error: ${errMsg}` 
+              }),
+              { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
           }
-        });
+          throw err;
+        }
 
         const projectId = projectResult.projectCreate.id;
         console.log('Created project:', projectId);
@@ -340,10 +426,10 @@ serve(async (req) => {
   } catch (error) {
     // Log detailed error for server-side debugging
     console.error('Railway deploy error:', error);
-    // Return safe, generic message to client
-    const safeMessage = error instanceof Error ? getSafeErrorMessage(error) : 'An error occurred';
+    // Return the actual error message for debugging
+    const errorMessage = error instanceof Error ? error.message : 'An error occurred';
     return new Response(
-      JSON.stringify({ error: safeMessage }),
+      JSON.stringify({ error: errorMessage }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }

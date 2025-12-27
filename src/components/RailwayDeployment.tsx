@@ -1,9 +1,19 @@
-import { useEffect, useRef } from "react";
-import { Cloud, ExternalLink, Loader2, CheckCircle, XCircle, RefreshCw } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Cloud, ExternalLink, Loader2, CheckCircle, XCircle, RefreshCw, Stethoscope } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useWorkspaceStore } from "@/store/useWorkspaceStore";
 import { supabase } from "@/integrations/supabase/client";
+
+interface DiagnoseResult {
+  tokenValid: boolean;
+  workspaceConfigured: boolean;
+  workspaceId: string | null;
+  workspaceAccessible: boolean;
+  workspaceName: string | null;
+  availableTeams: Array<{ id: string; name: string }>;
+  error: string | null;
+}
 
 export function RailwayDeployment() {
   const railwayStatus = useWorkspaceStore((s) => s.railwayStatus);
@@ -24,6 +34,7 @@ export function RailwayDeployment() {
   
   const logsEndRef = useRef<HTMLDivElement>(null);
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
+  const [isDiagnosing, setIsDiagnosing] = useState(false);
 
   // Auto-scroll logs
   useEffect(() => {
@@ -38,6 +49,71 @@ export function RailwayDeployment() {
       }
     };
   }, []);
+
+  const diagnoseConnection = async () => {
+    setIsDiagnosing(true);
+    clearDeploymentLogs();
+    appendDeploymentLog("🔍 Diagnosing Railway connection...");
+
+    try {
+      const { data, error } = await supabase.functions.invoke('railway-deploy', {
+        body: { action: 'diagnose' }
+      });
+
+      if (error) {
+        // Try to extract the actual error from the response
+        let errorMessage = error.message;
+        try {
+          if (error.context) {
+            const errorData = await error.context.json();
+            if (errorData?.error) {
+              errorMessage = errorData.error;
+            }
+          }
+        } catch {
+          // Ignore parse errors
+        }
+        throw new Error(errorMessage);
+      }
+
+      const result = data as DiagnoseResult;
+      
+      appendDeploymentLog(`Token valid: ${result.tokenValid ? '✅ Yes' : '❌ No'}`);
+      appendDeploymentLog(`Workspace configured: ${result.workspaceConfigured ? '✅ Yes' : '❌ No'}`);
+      
+      if (result.workspaceId) {
+        appendDeploymentLog(`Workspace ID: ${result.workspaceId}`);
+      }
+      
+      appendDeploymentLog(`Workspace accessible: ${result.workspaceAccessible ? '✅ Yes' : '❌ No'}`);
+      
+      if (result.workspaceName) {
+        appendDeploymentLog(`Workspace name: ${result.workspaceName}`);
+      }
+      
+      if (result.availableTeams.length > 0) {
+        appendDeploymentLog(`\n📋 Available teams/workspaces:`);
+        result.availableTeams.forEach(team => {
+          const isCurrent = team.id === result.workspaceId;
+          appendDeploymentLog(`  ${isCurrent ? '→ ' : '  '}${team.name}: ${team.id}`);
+        });
+      } else {
+        appendDeploymentLog(`⚠️ No teams found for this token`);
+      }
+      
+      if (result.error) {
+        appendDeploymentLog(`\n❌ Error: ${result.error}`);
+      } else if (result.workspaceAccessible) {
+        appendDeploymentLog(`\n✅ Configuration looks good! Try deploying.`);
+      }
+
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Diagnosis failed";
+      appendDeploymentLog(`❌ Error: ${message}`);
+    } finally {
+      setIsDiagnosing(false);
+    }
+  };
 
   const startDeployment = async () => {
     if (!repoInfo) return;
@@ -58,8 +134,25 @@ export function RailwayDeployment() {
         }
       });
 
-      if (error) throw new Error(error.message);
-      if (data.error) throw new Error(data.error);
+      // Handle FunctionsHttpError - extract actual error message
+      if (error) {
+        let errorMessage = error.message;
+        try {
+          if (error.context) {
+            const errorData = await error.context.json();
+            if (errorData?.error) {
+              errorMessage = errorData.error;
+            }
+          }
+        } catch {
+          // Ignore parse errors, use original message
+        }
+        throw new Error(errorMessage);
+      }
+      
+      if (data?.error) {
+        throw new Error(data.error);
+      }
 
       const { projectId, serviceId, environmentId } = data;
       setRailwayProjectId(projectId);
@@ -99,7 +192,20 @@ export function RailwayDeployment() {
           }
         });
 
-        if (error) throw new Error(error.message);
+        if (error) {
+          let errorMessage = error.message;
+          try {
+            if (error.context) {
+              const errorData = await error.context.json();
+              if (errorData?.error) {
+                errorMessage = errorData.error;
+              }
+            }
+          } catch {
+            // Ignore
+          }
+          throw new Error(errorMessage);
+        }
 
         const { status, domain } = data;
         
@@ -154,6 +260,20 @@ export function RailwayDeployment() {
         </div>
         
         <div className="flex items-center gap-2">
+          <Button 
+            size="sm" 
+            variant="ghost" 
+            onClick={diagnoseConnection}
+            disabled={isDiagnosing}
+          >
+            {isDiagnosing ? (
+              <Loader2 className="w-3 h-3 animate-spin" />
+            ) : (
+              <Stethoscope className="w-3 h-3" />
+            )}
+            <span className="ml-1">Diagnose</span>
+          </Button>
+          
           {railwayStatus === "idle" && (
             <Button size="sm" onClick={startDeployment}>
               Deploy
@@ -222,7 +342,7 @@ export function RailwayDeployment() {
         <div className="font-mono text-xs space-y-1">
           {deploymentLogs.length === 0 ? (
             <p className="text-muted-foreground">
-              Click "Deploy" to deploy this repository to Railway cloud.
+              Click "Diagnose" to check your Railway configuration, or "Deploy" to deploy this repository.
             </p>
           ) : (
             deploymentLogs.map((log, i) => (
