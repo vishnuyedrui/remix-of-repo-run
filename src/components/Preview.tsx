@@ -11,6 +11,7 @@ export function Preview() {
   const [copied, setCopied] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showRecovery, setShowRecovery] = useState(false);
+  const [showBackendWarning, setShowBackendWarning] = useState(true);
   const recoveryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const isLoading = ["booting", "mounting", "installing", "running"].includes(containerStatus);
@@ -245,16 +246,35 @@ export function Preview() {
         )}
 
         {previewUrl && (
-          <iframe
-            key={key}
-            src={previewUrl}
-            className="w-full h-full border-0 bg-white"
-            style={{ backgroundColor: '#ffffff' }}
-            title="Preview"
-            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
-            referrerPolicy="no-referrer-when-downgrade"
-            allow="cross-origin-isolated"
-          />
+          <div className="w-full h-full relative flex flex-col">
+            {/* Backend warning banner */}
+            {projectInfo?.needsBackend && showBackendWarning && (
+              <div className="shrink-0 bg-warning text-warning-foreground px-4 py-2 flex items-center gap-2 text-sm">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <span className="flex-1">
+                  {projectInfo.backendHint || "This app may require an external API. If it appears blank, the backend service may be unavailable."}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-2 hover:bg-warning-foreground/20 text-warning-foreground"
+                  onClick={() => setShowBackendWarning(false)}
+                >
+                  <X className="w-3 h-3" />
+                </Button>
+              </div>
+            )}
+            <iframe
+              key={key}
+              src={previewUrl}
+              className="flex-1 w-full border-0 bg-white"
+              style={{ backgroundColor: '#ffffff' }}
+              title="Preview"
+              sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
+              referrerPolicy="no-referrer-when-downgrade"
+              allow="cross-origin-isolated"
+            />
+          </div>
         )}
 
         {isCodeBrowsingOnly && containerStatus === "ready" && !previewUrl && (
