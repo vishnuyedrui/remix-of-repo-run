@@ -56,33 +56,10 @@ serve(async (req) => {
   }
 
   try {
-    // Verify authentication
-    const authHeader = req.headers.get('Authorization');
-    if (!authHeader) {
-      console.error('Missing authorization header');
-      return new Response(
-        JSON.stringify({ error: 'Missing authorization' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
-      { global: { headers: { Authorization: authHeader } } }
-    );
-
-    const { data: { user }, error: authError } = await supabaseClient.auth.getUser();
-    if (authError || !user) {
-      console.error('Authentication failed:', authError?.message);
-      return new Response(
-        JSON.stringify({ error: 'Unauthorized' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    console.log('Authenticated user:', user.id);
-
+    // Note: This function is public (verify_jwt = false in config.toml)
+    // Security is provided by Railway API token validation (server-side secret)
+    // and GitHub URL validation
+    
     const railwayToken = Deno.env.get('RAILWAY_API_TOKEN');
     if (!railwayToken) {
       console.error('RAILWAY_API_TOKEN not configured');
@@ -93,7 +70,7 @@ serve(async (req) => {
     }
 
     const body: DeployRequest = await req.json();
-    console.log('Railway deploy request:', body.action, 'by user:', user.id);
+    console.log('Railway deploy request:', body.action);
 
     const graphqlRequest = async (query: string, variables: Record<string, unknown> = {}) => {
       console.log('GraphQL request:', query.slice(0, 100) + '...');
