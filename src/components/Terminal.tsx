@@ -1,9 +1,10 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useCallback } from "react";
 import { Terminal as XTerm } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 import { useWorkspaceStore } from "@/store/useWorkspaceStore";
 import { useResizeObserver } from "@/hooks/useResizeObserver";
 import { Terminal as TerminalIcon } from "lucide-react";
+import { startShell, writeToShell, resizeShell, isShellActive } from "@/utils/webcontainer";
 import "xterm/css/xterm.css";
 
 export function Terminal() {
@@ -11,15 +12,25 @@ export function Terminal() {
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const lastOutputRef = useRef<string>("");
+  const shellStartedRef = useRef(false);
   
   const terminalOutput = useWorkspaceStore((s) => s.terminalOutput);
   const containerStatus = useWorkspaceStore((s) => s.containerStatus);
 
+  // Callback for shell output - write directly to xterm
+  const handleShellOutput = useCallback((data: string) => {
+    if (xtermRef.current) {
+      xtermRef.current.write(data);
+    }
+  }, []);
+
   // Use shared ResizeObserver for terminal fitting
   const resizeRef = useResizeObserver<HTMLDivElement>(() => {
-    if (fitAddonRef.current) {
+    if (fitAddonRef.current && xtermRef.current) {
       try {
         fitAddonRef.current.fit();
+        const { cols, rows } = xtermRef.current;
+        resizeShell(cols, rows);
       } catch {
         // Ignore resize errors
       }
@@ -69,6 +80,13 @@ export function Terminal() {
     xterm.open(terminalContainerRef.current);
     fitAddon.fit();
 
+    // Handle user input - send to shell
+    xterm.onData((data) => {
+      if (isShellActive()) {
+        writeToShell(data);
+      }
+    });
+
     xtermRef.current = xterm;
     fitAddonRef.current = fitAddon;
 
@@ -79,7 +97,24 @@ export function Terminal() {
     };
   }, []);
 
-  // Write new output to terminal
+  // Start shell when container is ready
+  useEffect(() => {
+    if (containerStatus === "ready" && !shellStartedRef.current) {
+      shellStartedRef.current = true;
+      startShell(handleShellOutput).then((success) => {
+        if (success && xtermRef.current) {
+          xtermRef.current.write("\r\n\x1b[32m✓ Interactive shell ready. Type commands here.\x1b[0m\r\n\r\n");
+        }
+      });
+    }
+    
+    // Reset shell flag when going back to idle
+    if (containerStatus === "idle") {
+      shellStartedRef.current = false;
+    }
+  }, [containerStatus, handleShellOutput]);
+
+  // Write new output to terminal (for workflow logs)
   useEffect(() => {
     if (!xtermRef.current) return;
 
@@ -108,6 +143,9 @@ export function Terminal() {
           <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
             Terminal
           </span>
+          {containerStatus === "ready" && (
+            <span className="text-xs text-muted-foreground/70">(interactive)</span>
+          )}
         </div>
         
         <div className="flex items-center gap-2">

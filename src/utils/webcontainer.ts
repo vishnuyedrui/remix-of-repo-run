@@ -1,9 +1,14 @@
-import { WebContainer, FileSystemTree } from "@webcontainer/api";
+import { WebContainer, FileSystemTree, WebContainerProcess } from "@webcontainer/api";
 import type { ProjectType } from "./projectDetection";
 
 let webcontainerInstance: WebContainer | null = null;
 let bootPromise: Promise<WebContainer> | null = null;
 let supportCheckLogged = false;
+
+// Interactive shell support
+let shellProcess: WebContainerProcess | null = null;
+let shellWriter: WritableStreamDefaultWriter<string> | null = null;
+let shellOutputCallback: ((data: string) => void) | null = null;
 
 // Check if WebContainers are supported in this environment
 export function checkWebContainerSupport(): { supported: boolean; reason?: string } {
@@ -319,12 +324,22 @@ export async function startDevServer(
   
   const handleServerReady = (url: string, port?: number) => {
     if (serverReadyFired) return;
+    // Skip localhost URLs - they're not accessible from the iframe
+    if (url.startsWith("http://localhost") || url.startsWith("http://127.0.0.1")) {
+      onOutput?.(`\n\x1b[33m⚠ Detected localhost URL (${url}) - waiting for external URL...\x1b[0m\n`);
+      return;
+    }
     serverReadyFired = true;
     if (serverReadyTimeout) clearTimeout(serverReadyTimeout);
     onOutput?.(`\n\x1b[32m✓ Server ready${port ? ` on port ${port}` : ''}\x1b[0m\n`);
     onServerReady?.(url);
     onStatusChange?.("ready");
   };
+
+  // Register server-ready event BEFORE starting any processes
+  container.on("server-ready", (port, url) => {
+    handleServerReady(url, port);
+  });
   
   try {
     const output = createBufferedOutput(onOutput);
@@ -335,7 +350,7 @@ export async function startDevServer(
     if (pkg && hasGitSshDependencies(pkg)) {
       onStatusChange?.("error");
       onError?.(
-        "This project uses git+ssh dependencies (e.g. git@... or ssh://...). Those can’t be installed in the in-browser container."
+        "This project uses git+ssh dependencies (e.g. git@... or ssh://...). Those can't be installed in the in-browser container."
       );
       print("\x1b[31m✗ Unsupported dependency source detected (git+ssh).\x1b[0m\n");
       output.flush();
@@ -346,16 +361,37 @@ export async function startDevServer(
     onStatusChange?.("installing");
 
     const hasPackageLock = await fileExists(container, "package-lock.json");
-    const npmArgs = hasPackageLock ? ["ci"] : ["install"];
+    let npmArgs = hasPackageLock ? ["ci"] : ["install"];
     npmArgs.push("--no-audit", "--no-fund");
 
     print(`\x1b[36m➜ Running npm ${hasPackageLock ? "ci" : "install"}...\x1b[0m\n\n`);
 
-    const installExitCode = await runCommandWithTimeout(container, "npm", npmArgs, print, {
+    let installOutput = "";
+    const captureOutput = (data: string) => {
+      installOutput += data;
+      print(data);
+    };
+
+    let installExitCode = await runCommandWithTimeout(container, "npm", npmArgs, captureOutput, {
       label: "Dependency installation",
       timeoutMs: 5 * 60_000,
       bufferMs: 75,
     });
+
+    // Retry with --legacy-peer-deps if install failed with peer dependency errors
+    if (installExitCode !== 0 && hasPeerDepError(installOutput)) {
+      print("\n\x1b[33m⚠ Peer dependency conflict detected, retrying with --legacy-peer-deps...\x1b[0m\n\n");
+      
+      npmArgs = hasPackageLock 
+        ? ["ci", "--legacy-peer-deps", "--no-audit", "--no-fund"]
+        : ["install", "--legacy-peer-deps", "--no-audit", "--no-fund"];
+      
+      installExitCode = await runCommandWithTimeout(container, "npm", npmArgs, print, {
+        label: "Dependency installation (legacy-peer-deps)",
+        timeoutMs: 5 * 60_000,
+        bufferMs: 75,
+      });
+    }
 
     if (installExitCode !== 0) {
       onError?.(`Dependency install failed (exit code ${installExitCode}). Check terminal for details.`);
@@ -378,9 +414,27 @@ export async function startDevServer(
     
     // Start dev server
     onStatusChange?.("running");
-    onOutput?.(`\x1b[36m➜ Running npm run ${devScript}...\x1b[0m\n\n`);
     
-    const serverProcess = await container.spawn("npm", ["run", devScript]);
+    // Detect framework and add host flags for Vite/CRA
+    const isVite = pkg?.devDependencies?.vite || pkg?.dependencies?.vite;
+    const isCRA = pkg?.dependencies?.["react-scripts"] || pkg?.devDependencies?.["react-scripts"];
+    
+    let serverArgs = ["run", devScript];
+    
+    if (isVite) {
+      // Vite: add --host flag to expose to network
+      serverArgs = ["run", devScript, "--", "--host", "0.0.0.0"];
+      onOutput?.(`\x1b[36m➜ Running npm run ${devScript} -- --host 0.0.0.0 (Vite detected)...\x1b[0m\n\n`);
+    } else if (isCRA) {
+      // CRA: set HOST env var
+      onOutput?.(`\x1b[36m➜ Running npm run ${devScript} (React Scripts detected)...\x1b[0m\n\n`);
+    } else {
+      onOutput?.(`\x1b[36m➜ Running npm run ${devScript}...\x1b[0m\n\n`);
+    }
+    
+    const serverProcess = await container.spawn("npm", serverArgs, {
+      env: isCRA ? { HOST: "0.0.0.0", PORT: "3000" } : undefined,
+    });
     
     // Patterns that indicate the server is ready (fallback detection)
     const readyPatterns = [
@@ -406,17 +460,17 @@ export async function startDevServer(
             if (!serverReadyFired) {
               for (const pattern of readyPatterns) {
                 if (pattern.test(data)) {
-                  // Extract port if present, construct a fallback URL
+                  // Extract port if present
                   const portMatch = data.match(/(?:localhost|127\.0\.0\.1):(\d+)/i);
                   const port = portMatch ? parseInt(portMatch[1], 10) : 3000;
-                  // Give the actual server-ready event a moment to fire
+                  // Give the actual server-ready event a moment to fire with proper URL
                   setTimeout(() => {
                     if (!serverReadyFired) {
-                      serverPrint("\n\x1b[33m⚠ Detected server ready from output (fallback)\x1b[0m\n");
+                      serverPrint("\n\x1b[33m⚠ Server appears ready but no external URL detected yet...\x1b[0m\n");
+                      serverPrint("\x1b[33m  Waiting for WebContainer to expose the port...\x1b[0m\n");
                       serverOutput.flush();
-                      handleServerReady(`http://localhost:${port}`, port);
                     }
-                  }, 1000);
+                  }, 2000);
                   break;
                 }
               }
@@ -428,19 +482,16 @@ export async function startDevServer(
         // ignore output pipe errors
       });
     
-    // Listen for server ready event
-    container.on("server-ready", (port, url) => {
-      handleServerReady(url, port);
-    });
-    
-    // Set a timeout - if server-ready hasn't fired in 60 seconds, show helpful message
+    // Set a timeout - if server-ready hasn't fired in 45 seconds, show helpful message
     serverReadyTimeout = setTimeout(() => {
       if (!serverReadyFired) {
-        onOutput?.("\n\x1b[33m⚠ Server is taking longer than expected...\x1b[0m\n");
-        onOutput?.("\x1b[33m  Check the terminal output above for errors.\x1b[0m\n");
-        onOutput?.("\x1b[33m  The dev server may need manual configuration.\x1b[0m\n");
+        onOutput?.("\n\x1b[33m⚠ Server is taking longer than expected to expose a URL...\x1b[0m\n");
+        onOutput?.("\x1b[33m  Try these in the terminal:\x1b[0m\n");
+        onOutput?.("\x1b[33m  • For Vite: npm run dev -- --host 0.0.0.0\x1b[0m\n");
+        onOutput?.("\x1b[33m  • For CRA: HOST=0.0.0.0 npm start\x1b[0m\n");
+        onOutput?.("\x1b[33m  • Check the terminal output above for errors.\x1b[0m\n");
       }
-    }, 60000);
+    }, 45000);
     
     // Handle server exit
     serverProcess.exit.then((code) => {
@@ -457,6 +508,18 @@ export async function startDevServer(
     onError?.(message);
     onStatusChange?.("error");
   }
+}
+
+// Helper: detect peer dependency errors in npm output
+function hasPeerDepError(output: string): boolean {
+  const peerDepPatterns = [
+    /ERESOLVE/i,
+    /peer dep/i,
+    /could not resolve dependency/i,
+    /conflicting peer dependency/i,
+    /unable to resolve dependency tree/i,
+  ];
+  return peerDepPatterns.some(pattern => pattern.test(output));
 }
 
 // Find the best directory to serve for static sites
@@ -854,9 +917,91 @@ export async function runFullWorkflow(
 }
 
 export function teardownWebContainer(): void {
+  // Clean up shell
+  if (shellWriter) {
+    try { shellWriter.close(); } catch { /* ignore */ }
+    shellWriter = null;
+  }
+  shellProcess = null;
+  shellOutputCallback = null;
+  
   if (webcontainerInstance) {
     webcontainerInstance.teardown();
     webcontainerInstance = null;
     bootPromise = null;
   }
+}
+
+// ========== Interactive Shell Support ==========
+
+export async function startShell(onOutput: (data: string) => void): Promise<boolean> {
+  if (!webcontainerInstance) {
+    console.warn("[Shell] No WebContainer instance available");
+    return false;
+  }
+  
+  // Already running
+  if (shellProcess && shellWriter) {
+    shellOutputCallback = onOutput;
+    return true;
+  }
+  
+  try {
+    shellOutputCallback = onOutput;
+    shellProcess = await webcontainerInstance.spawn("jsh", {
+      terminal: { cols: 80, rows: 24 },
+    });
+    
+    shellWriter = shellProcess.input.getWriter();
+    
+    shellProcess.output.pipeTo(
+      new WritableStream({
+        write(data) {
+          shellOutputCallback?.(data);
+        },
+      })
+    ).catch(() => {
+      // ignore pipe errors on teardown
+    });
+    
+    shellProcess.exit.then(() => {
+      shellProcess = null;
+      shellWriter = null;
+    });
+    
+    return true;
+  } catch (error) {
+    console.error("[Shell] Failed to start shell:", error);
+    return false;
+  }
+}
+
+export async function writeToShell(data: string): Promise<void> {
+  if (!shellWriter) {
+    console.warn("[Shell] No shell writer available");
+    return;
+  }
+  try {
+    await shellWriter.write(data);
+  } catch (error) {
+    console.error("[Shell] Failed to write to shell:", error);
+  }
+}
+
+export function resizeShell(cols: number, rows: number): void {
+  if (shellProcess) {
+    try {
+      shellProcess.resize({ cols, rows });
+    } catch {
+      // ignore resize errors
+    }
+  }
+}
+
+export function isShellActive(): boolean {
+  return shellProcess !== null && shellWriter !== null;
+}
+
+export function getWebContainerInstance(): WebContainer | null {
+  return webcontainerInstance;
 }
