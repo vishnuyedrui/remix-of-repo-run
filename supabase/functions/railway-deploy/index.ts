@@ -49,35 +49,41 @@ serve(async (req) => {
     const body: DeployRequest = await req.json();
     console.log('Railway deploy request:', body.action);
 
-    // GraphQL request helper with token-mode handling
-    const graphqlRequest = async (query: string, variables: Record<string, unknown> = {}) => {
+    // GraphQL request helper - tries both token types for robustness
+    const graphqlRequest = async (query: string, variables: Record<string, unknown> = {}, preferTeamToken = false) => {
       console.log('GraphQL request:', query.slice(0, 100) + '...');
       
-      // Try with Bearer token first (account token style)
+      const makeHeaders = (useTeamToken: boolean): Record<string, string> => {
+        if (useTeamToken) {
+          return { 'Team-Access-Token': railwayToken, 'Content-Type': 'application/json' };
+        }
+        return { 'Authorization': `Bearer ${railwayToken}`, 'Content-Type': 'application/json' };
+      };
+
+      // Try primary header type first
       let response = await fetch(RAILWAY_API_URL, {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${railwayToken}`,
-          'Content-Type': 'application/json',
-        },
+        headers: makeHeaders(preferTeamToken),
         body: JSON.stringify({ query, variables }),
       });
 
       let data = await response.json();
       
-      // If we get an auth error, try with Team-Access-Token header (team token style)
-      if (data.errors && data.errors.some((e: { message: string }) => 
-        e.message.toLowerCase().includes('unauthorized') || 
-        e.message.toLowerCase().includes('forbidden') ||
-        e.message.toLowerCase().includes('authentication')
-      )) {
-        console.log('Bearer token failed, trying Team-Access-Token header...');
+      // If we get an error that might be auth/workspace related, try the other header type
+      const shouldRetry = data.errors && data.errors.some((e: { message: string }) => {
+        const msg = e.message.toLowerCase();
+        return msg.includes('unauthorized') || 
+               msg.includes('forbidden') ||
+               msg.includes('authentication') ||
+               msg.includes('workspace not found') ||
+               msg.includes('team not found');
+      });
+      
+      if (shouldRetry) {
+        console.log('First token type failed, trying alternate header...');
         response = await fetch(RAILWAY_API_URL, {
           method: 'POST',
-          headers: {
-            'Team-Access-Token': railwayToken,
-            'Content-Type': 'application/json',
-          },
+          headers: makeHeaders(!preferTeamToken),
           body: JSON.stringify({ query, variables }),
         });
         data = await response.json();
@@ -97,65 +103,115 @@ serve(async (req) => {
       case 'diagnose': {
         const workspaceId = Deno.env.get('RAILWAY_WORKSPACE_ID');
         const results: {
+          tokenType: 'account' | 'team' | 'unknown';
           tokenValid: boolean;
           workspaceConfigured: boolean;
           workspaceId: string | null;
           workspaceAccessible: boolean;
           workspaceName: string | null;
-          availableTeams: Array<{ id: string; name: string }>;
+          userEmail: string | null;
           error: string | null;
         } = {
+          tokenType: 'unknown',
           tokenValid: false,
           workspaceConfigured: !!workspaceId,
           workspaceId: workspaceId || null,
           workspaceAccessible: false,
           workspaceName: null,
-          availableTeams: [],
+          userEmail: null,
           error: null,
         };
 
+        // Try Account Token first (uses Bearer header, can query "me")
         try {
-          // First, try to get the current user/token info
-          const meQuery = `
-            query me {
-              me {
-                id
-                email
-                teams {
-                  edges {
-                    node {
-                      id
-                      name
-                    }
-                  }
-                }
-              }
-            }
-          `;
-
-          const meResult = await graphqlRequest(meQuery);
-          results.tokenValid = true;
+          console.log('Trying account token query...');
+          const meQuery = `query { me { id email name } }`;
           
-          // Extract available teams
-          if (meResult.me?.teams?.edges) {
-            results.availableTeams = meResult.me.teams.edges.map((e: { node: { id: string; name: string } }) => ({
-              id: e.node.id,
-              name: e.node.name,
-            }));
-          }
+          const response = await fetch(RAILWAY_API_URL, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${railwayToken}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ query: meQuery }),
+          });
 
-          // Check if configured workspace is accessible
-          if (workspaceId) {
-            const teamMatch = results.availableTeams.find(t => t.id === workspaceId);
-            if (teamMatch) {
-              results.workspaceAccessible = true;
-              results.workspaceName = teamMatch.name;
-            } else {
-              results.error = `Workspace ID "${workspaceId}" not found in accessible teams. Available: ${results.availableTeams.map(t => `${t.name} (${t.id})`).join(', ') || 'none'}`;
-            }
+          const data = await response.json();
+          
+          if (!data.errors && data.data?.me) {
+            results.tokenType = 'account';
+            results.tokenValid = true;
+            results.userEmail = data.data.me.email || data.data.me.name || 'Account token valid';
+            console.log('Account token valid:', results.userEmail);
           }
         } catch (err) {
-          results.error = err instanceof Error ? err.message : 'Unknown error during diagnosis';
+          console.log('Account token check failed:', err);
+        }
+
+        // If account token didn't work and we have a workspace ID, try as Team Token
+        if (!results.tokenValid && workspaceId) {
+          try {
+            console.log('Trying team token query...');
+            const teamQuery = `query { team(id: "${workspaceId}") { id name } }`;
+            
+            const response = await fetch(RAILWAY_API_URL, {
+              method: 'POST',
+              headers: {
+                'Team-Access-Token': railwayToken,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ query: teamQuery }),
+            });
+
+            const data = await response.json();
+            console.log('Team token response:', JSON.stringify(data));
+            
+            if (!data.errors && data.data?.team) {
+              results.tokenType = 'team';
+              results.tokenValid = true;
+              results.workspaceAccessible = true;
+              results.workspaceName = data.data.team.name;
+              console.log('Team token valid, team name:', results.workspaceName);
+            } else if (data.errors) {
+              results.error = data.errors[0]?.message || 'Team query failed';
+            }
+          } catch (err) {
+            console.log('Team token check failed:', err);
+            results.error = err instanceof Error ? err.message : 'Unknown error';
+          }
+        }
+
+        // If we have an account token, check if the workspace is accessible
+        if (results.tokenType === 'account' && workspaceId && !results.workspaceAccessible) {
+          try {
+            console.log('Checking workspace access with account token...');
+            const teamQuery = `query { team(id: "${workspaceId}") { id name } }`;
+            
+            const response = await fetch(RAILWAY_API_URL, {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${railwayToken}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ query: teamQuery }),
+            });
+
+            const data = await response.json();
+            console.log('Team access check response:', JSON.stringify(data));
+            
+            if (!data.errors && data.data?.team) {
+              results.workspaceAccessible = true;
+              results.workspaceName = data.data.team.name;
+            } else if (data.errors) {
+              results.error = `Cannot access workspace: ${data.errors[0]?.message}. You may need to use a Team Token or verify you're a member of this team.`;
+            }
+          } catch (err) {
+            results.error = err instanceof Error ? err.message : 'Unknown error checking workspace';
+          }
+        }
+
+        if (!results.tokenValid) {
+          results.error = results.error || 'Token validation failed. Please check your RAILWAY_API_TOKEN is correct.';
         }
 
         return new Response(

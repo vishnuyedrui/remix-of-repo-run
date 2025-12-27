@@ -6,12 +6,13 @@ import { useWorkspaceStore } from "@/store/useWorkspaceStore";
 import { supabase } from "@/integrations/supabase/client";
 
 interface DiagnoseResult {
+  tokenType: 'account' | 'team' | 'unknown';
   tokenValid: boolean;
   workspaceConfigured: boolean;
   workspaceId: string | null;
   workspaceAccessible: boolean;
   workspaceName: string | null;
-  availableTeams: Array<{ id: string; name: string }>;
+  userEmail: string | null;
   error: string | null;
 }
 
@@ -78,7 +79,13 @@ export function RailwayDeployment() {
 
       const result = data as DiagnoseResult;
       
+      appendDeploymentLog(`Token type: ${result.tokenType === 'account' ? '👤 Account' : result.tokenType === 'team' ? '👥 Team' : '❓ Unknown'}`);
       appendDeploymentLog(`Token valid: ${result.tokenValid ? '✅ Yes' : '❌ No'}`);
+      
+      if (result.userEmail) {
+        appendDeploymentLog(`Account: ${result.userEmail}`);
+      }
+      
       appendDeploymentLog(`Workspace configured: ${result.workspaceConfigured ? '✅ Yes' : '❌ No'}`);
       
       if (result.workspaceId) {
@@ -89,16 +96,6 @@ export function RailwayDeployment() {
       
       if (result.workspaceName) {
         appendDeploymentLog(`Workspace name: ${result.workspaceName}`);
-      }
-      
-      if (result.availableTeams.length > 0) {
-        appendDeploymentLog(`\n📋 Available teams/workspaces:`);
-        result.availableTeams.forEach(team => {
-          const isCurrent = team.id === result.workspaceId;
-          appendDeploymentLog(`  ${isCurrent ? '→ ' : '  '}${team.name}: ${team.id}`);
-        });
-      } else {
-        appendDeploymentLog(`⚠️ No teams found for this token`);
       }
       
       if (result.error) {
