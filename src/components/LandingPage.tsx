@@ -1,6 +1,6 @@
 import { useState, useEffect, memo } from "react";
 import { motion } from "motion/react";
-import { Github, Rocket, Settings, Code2, Terminal as TerminalIcon, Heart, CreditCard, Cloud, Monitor, Eye, ChevronDown } from "lucide-react";
+import { Github, Rocket, Settings, Code2, Terminal as TerminalIcon, Heart, Eye, ChevronDown, CreditCard } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SettingsModal } from "./SettingsModal";
@@ -11,8 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { useWorkspaceStore, DeploymentMode } from "@/store/useWorkspaceStore";
+import { useWorkspaceStore } from "@/store/useWorkspaceStore";
 import {
   parseGitHubUrl,
   fetchRepoTree,
@@ -112,7 +111,6 @@ export function LandingPage() {
   const isLoadingRepo = useWorkspaceStore((s) => s.isLoadingRepo);
   const loadingProgress = useWorkspaceStore((s) => s.loadingProgress);
   const error = useWorkspaceStore((s) => s.error);
-  const deploymentMode = useWorkspaceStore((s) => s.deploymentMode);
   const setRepoInfo = useWorkspaceStore((s) => s.setRepoInfo);
   const setProjectInfo = useWorkspaceStore((s) => s.setProjectInfo);
   const setFileTree = useWorkspaceStore((s) => s.setFileTree);
@@ -125,7 +123,6 @@ export function LandingPage() {
   const appendTerminalOutput = useWorkspaceStore((s) => s.appendTerminalOutput);
   const clearTerminalOutput = useWorkspaceStore((s) => s.clearTerminalOutput);
   const setPreviewUrl = useWorkspaceStore((s) => s.setPreviewUrl);
-  const setDeploymentMode = useWorkspaceStore((s) => s.setDeploymentMode);
 
   const handleLaunch = async () => {
     if (!url.trim()) {
@@ -166,26 +163,18 @@ export function LandingPage() {
       setIsLoadingRepo(false);
       setLoadingProgress(null);
 
-      if (deploymentMode === 'webcontainer') {
-        runFullWorkflow(fsTree, {
-          onStatusChange: setContainerStatus,
-          onOutput: appendTerminalOutput,
-          onServerReady: setPreviewUrl,
-          onError: (err) => setError(err),
-        }, projectInfo.type);
-      }
+      runFullWorkflow(fsTree, {
+        onStatusChange: setContainerStatus,
+        onOutput: appendTerminalOutput,
+        onServerReady: setPreviewUrl,
+        onError: (err) => setError(err),
+      }, projectInfo.type);
 
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to load repository";
       setError(message);
       setIsLoadingRepo(false);
       setLoadingProgress(null);
-    }
-  };
-
-  const handleModeChange = (value: string) => {
-    if (value) {
-      setDeploymentMode(value as DeploymentMode);
     }
   };
 
@@ -409,47 +398,6 @@ export function LandingPage() {
             Paste a link. Watch it build. No setup required. Powered by WebContainers.
           </motion.p>
 
-          {/* Mode Toggle */}
-          <motion.div
-            className="flex flex-wrap items-center justify-center gap-4 mb-4"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.8 }}
-          >
-            <ToggleGroup 
-              type="single" 
-              value={deploymentMode} 
-              onValueChange={handleModeChange}
-              className="bg-white/80 backdrop-blur-sm rounded-xl p-1.5 shadow-lg shadow-pink-100/50 border border-pink-200"
-            >
-              <ToggleGroupItem 
-                value="webcontainer" 
-                className="gap-2 data-[state=on]:bg-gradient-to-r data-[state=on]:from-pink-500 data-[state=on]:to-rose-500 data-[state=on]:text-white data-[state=on]:shadow-lg px-6 py-3 rounded-lg font-semibold transition-all"
-              >
-                <Monitor className="w-4 h-4" />
-                Quick Preview
-              </ToggleGroupItem>
-              <ToggleGroupItem 
-                value="railway" 
-                className="gap-2 data-[state=on]:bg-gradient-to-r data-[state=on]:from-pink-500 data-[state=on]:to-rose-500 data-[state=on]:text-white data-[state=on]:shadow-lg px-6 py-3 rounded-lg font-semibold transition-all"
-              >
-                <Cloud className="w-4 h-4" />
-                Cloud Deploy
-              </ToggleGroupItem>
-            </ToggleGroup>
-          </motion.div>
-
-          <motion.p
-            className="text-sm text-pink-500/70 mb-8"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 1 }}
-          >
-            {deploymentMode === 'webcontainer' 
-              ? "Runs instantly in browser via WebContainers (Node.js only)"
-              : "Deploys to Railway cloud with full Docker support"
-            }
-          </motion.p>
         </motion.div>
 
         {/* URL Input */}
@@ -510,8 +458,8 @@ export function LandingPage() {
                 </>
               ) : (
                 <>
-                  {deploymentMode === 'railway' ? <Cloud className="w-5 h-5" /> : <Rocket className="w-5 h-5" />}
-                  {deploymentMode === 'railway' ? 'Deploy' : 'Launch'}
+                  <Rocket className="w-5 h-5" />
+                  Launch
                 </>
               )}
             </motion.button>
