@@ -90,6 +90,7 @@ export function LandingPage() {
   const [showSettings, setShowSettings] = useState(false);
   const [showDonate, setShowDonate] = useState(false);
   const [openFaqIndex, setOpenFaqIndex] = useState<number | null>(null);
+  const [showProjectTypes, setShowProjectTypes] = useState(false);
 
   // Show donate popup once per session after 0.5s delay
   useEffect(() => {
@@ -484,77 +485,100 @@ export function LandingPage() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 1.2, duration: 0.5 }}
         >
-          <div className="bg-white/60 backdrop-blur-sm rounded-xl p-6 border border-pink-200 shadow-lg">
-            <h3 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
-              <Code2 className="w-5 h-5 text-pink-500" />
-              Supported Project Types
-            </h3>
+          <div className="bg-white/60 backdrop-blur-sm rounded-xl border border-pink-200 shadow-lg overflow-hidden">
+            <button
+              onClick={() => setShowProjectTypes(!showProjectTypes)}
+              className="w-full p-6 flex items-center justify-between text-left hover:bg-white/40 transition-colors"
+            >
+              <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
+                <Code2 className="w-5 h-5 text-pink-500" />
+                Supported Project Types
+              </h3>
+              <motion.div
+                animate={{ rotate: showProjectTypes ? 180 : 0 }}
+                transition={{ duration: 0.2 }}
+              >
+                <ChevronDown className="w-5 h-5 text-gray-500" />
+              </motion.div>
+            </button>
             
-            <div className="grid md:grid-cols-2 gap-6">
-              {/* Can Run */}
-              <div>
-                <h4 className="text-sm font-medium text-green-600 mb-2 flex items-center gap-1.5">
-                  <span className="w-2 h-2 bg-green-500 rounded-full"></span>
-                  Can Run in Browser
-                </h4>
-                <ul className="text-sm text-gray-600 space-y-1.5">
-                  <li className="flex items-start gap-2">
-                    <span className="text-green-500 mt-0.5">✓</span>
-                    <span><strong>Node.js / NPM</strong> – All versions, including legacy peer deps</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="text-green-500 mt-0.5">✓</span>
-                    <span><strong>React, Vue, Angular, Svelte</strong> – All major frameworks</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="text-green-500 mt-0.5">✓</span>
-                    <span><strong>Next.js, Nuxt, Vite, Webpack</strong> – Build tools & SSR</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="text-green-500 mt-0.5">✓</span>
-                    <span><strong>Static HTML/CSS/JS</strong> – Vanilla projects</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="text-green-500 mt-0.5">✓</span>
-                    <span><strong>Python (basic)</strong> – Via Pyodide WebAssembly</span>
-                  </li>
-                </ul>
-              </div>
+            <motion.div
+              initial={false}
+              animate={{ 
+                height: showProjectTypes ? "auto" : 0,
+                opacity: showProjectTypes ? 1 : 0 
+              }}
+              transition={{ duration: 0.3, ease: "easeInOut" }}
+              className="overflow-hidden"
+            >
+              <div className="px-6 pb-6">
+                <div className="grid md:grid-cols-2 gap-6">
+                  {/* Can Run */}
+                  <div>
+                    <h4 className="text-sm font-medium text-green-600 mb-2 flex items-center gap-1.5">
+                      <span className="w-2 h-2 bg-green-500 rounded-full"></span>
+                      Can Run in Browser
+                    </h4>
+                    <ul className="text-sm text-gray-600 space-y-1.5">
+                      <li className="flex items-start gap-2">
+                        <span className="text-green-500 mt-0.5">✓</span>
+                        <span><strong>Node.js / NPM</strong> – All versions, including legacy peer deps</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="text-green-500 mt-0.5">✓</span>
+                        <span><strong>React, Vue, Angular, Svelte</strong> – All major frameworks</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="text-green-500 mt-0.5">✓</span>
+                        <span><strong>Next.js, Nuxt, Vite, Webpack</strong> – Build tools & SSR</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="text-green-500 mt-0.5">✓</span>
+                        <span><strong>Static HTML/CSS/JS</strong> – Vanilla projects</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="text-green-500 mt-0.5">✓</span>
+                        <span><strong>Python (basic)</strong> – Via Pyodide WebAssembly</span>
+                      </li>
+                    </ul>
+                  </div>
 
-              {/* Cannot Run */}
-              <div>
-                <h4 className="text-sm font-medium text-amber-600 mb-2 flex items-center gap-1.5">
-                  <span className="w-2 h-2 bg-amber-500 rounded-full"></span>
-                  Browse Only (Cloud Deploy Available)
-                </h4>
-                <ul className="text-sm text-gray-600 space-y-1.5">
-                  <li className="flex items-start gap-2">
-                    <span className="text-amber-500 mt-0.5">○</span>
-                    <span><strong>Java, Kotlin, Scala</strong> – Requires JVM</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="text-amber-500 mt-0.5">○</span>
-                    <span><strong>Go, Rust, C/C++</strong> – Native compilation needed</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="text-amber-500 mt-0.5">○</span>
-                    <span><strong>PHP, Ruby, .NET</strong> – Server-side runtimes</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="text-amber-500 mt-0.5">○</span>
-                    <span><strong>Native Node modules</strong> – Uses C++ bindings</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="text-amber-500 mt-0.5">○</span>
-                    <span><strong>Docker-only projects</strong> – Use Cloud Deploy mode</span>
-                  </li>
-                </ul>
-              </div>
-            </div>
+                  {/* Cannot Run */}
+                  <div>
+                    <h4 className="text-sm font-medium text-amber-600 mb-2 flex items-center gap-1.5">
+                      <span className="w-2 h-2 bg-amber-500 rounded-full"></span>
+                      Browse Only (Cloud Deploy Available)
+                    </h4>
+                    <ul className="text-sm text-gray-600 space-y-1.5">
+                      <li className="flex items-start gap-2">
+                        <span className="text-amber-500 mt-0.5">○</span>
+                        <span><strong>Java, Kotlin, Scala</strong> – Requires JVM</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="text-amber-500 mt-0.5">○</span>
+                        <span><strong>Go, Rust, C/C++</strong> – Native compilation needed</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="text-amber-500 mt-0.5">○</span>
+                        <span><strong>PHP, Ruby, .NET</strong> – Server-side runtimes</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="text-amber-500 mt-0.5">○</span>
+                        <span><strong>Native Node modules</strong> – Uses C++ bindings</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="text-amber-500 mt-0.5">○</span>
+                        <span><strong>Docker-only projects</strong> – Use Cloud Deploy mode</span>
+                      </li>
+                    </ul>
+                  </div>
+                </div>
 
-            <p className="mt-4 text-xs text-gray-500 text-center">
-              💡 Tip: Switch to <strong>Cloud Deploy</strong> mode for full Docker support and any language!
-            </p>
+                <p className="mt-4 text-xs text-gray-500 text-center">
+                  💡 Tip: Switch to <strong>Cloud Deploy</strong> mode for full Docker support and any language!
+                </p>
+              </div>
+            </motion.div>
           </div>
           {/* Loading progress */}
           {loadingProgress && (
