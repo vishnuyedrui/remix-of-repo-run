@@ -34,8 +34,8 @@ const PROJECT_TYPE_INFO: Record<ProjectType, Omit<ProjectInfo, "type">> = {
   },
   python: {
     label: "Python",
-    canRun: false,
-    description: "Code browsing only - Python runtime not supported in browser",
+    canRun: true,
+    description: "Runs in browser via Pyodide (WebAssembly) - some packages may not work",
   },
   rust: {
     label: "Rust",
