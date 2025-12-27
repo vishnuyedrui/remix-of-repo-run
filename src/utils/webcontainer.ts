@@ -1,5 +1,6 @@
 import { WebContainer, FileSystemTree, WebContainerProcess } from "@webcontainer/api";
 import type { ProjectType } from "./projectDetection";
+import { checkCompatibility, getDevServerConfig, type CompatibilityReport } from "./compatibilityChecker";
 
 let webcontainerInstance: WebContainer | null = null;
 let bootPromise: Promise<WebContainer> | null = null;
@@ -61,6 +62,7 @@ export interface ContainerCallbacks {
   onOutput?: (data: string) => void;
   onServerReady?: (url: string) => void;
   onError?: (error: string) => void;
+  onCompatibilityCheck?: (report: CompatibilityReport) => void;
 }
 
 export async function bootWebContainer(): Promise<WebContainer> {
@@ -315,7 +317,8 @@ async function findDevScript(container: WebContainer): Promise<string | null> {
 
 export async function startDevServer(
   container: WebContainer,
-  callbacks: ContainerCallbacks
+  callbacks: ContainerCallbacks,
+  compatibilityReport?: CompatibilityReport
 ): Promise<void> {
   const { onStatusChange, onOutput, onServerReady, onError } = callbacks;
   
@@ -357,40 +360,68 @@ export async function startDevServer(
       return;
     }
 
-    // Install dependencies
+    // Install dependencies with multi-strategy approach
     onStatusChange?.("installing");
 
     const hasPackageLock = await fileExists(container, "package-lock.json");
-    let npmArgs = hasPackageLock ? ["ci"] : ["install"];
-    npmArgs.push("--no-audit", "--no-fund");
-
-    print(`\x1b[36m➜ Running npm ${hasPackageLock ? "ci" : "install"}...\x1b[0m\n\n`);
-
+    const hasYarnLock = await fileExists(container, "yarn.lock");
+    const hasPnpmLock = await fileExists(container, "pnpm-lock.yaml");
+    
+    // Determine initial install strategy
+    let installExitCode = -1;
     let installOutput = "";
+    
     const captureOutput = (data: string) => {
       installOutput += data;
       print(data);
     };
 
-    let installExitCode = await runCommandWithTimeout(container, "npm", npmArgs, captureOutput, {
-      label: "Dependency installation",
-      timeoutMs: 5 * 60_000,
-      bufferMs: 75,
-    });
+    // Strategy 1: Try npm ci if lock file exists
+    if (hasPackageLock) {
+      print("\x1b[36m➜ Running npm ci (using package-lock.json)...\x1b[0m\n\n");
+      installExitCode = await runCommandWithTimeout(
+        container, "npm", ["ci", "--no-audit", "--no-fund"], captureOutput,
+        { label: "npm ci", timeoutMs: 5 * 60_000, bufferMs: 75 }
+      );
+    }
+    
+    // Strategy 2: Regular install
+    if (installExitCode !== 0) {
+      installOutput = "";
+      print("\x1b[36m➜ Running npm install...\x1b[0m\n\n");
+      installExitCode = await runCommandWithTimeout(
+        container, "npm", ["install", "--no-audit", "--no-fund"], captureOutput,
+        { label: "npm install", timeoutMs: 5 * 60_000, bufferMs: 75 }
+      );
+    }
 
-    // Retry with --legacy-peer-deps if install failed with peer dependency errors
+    // Strategy 3: Legacy peer deps
     if (installExitCode !== 0 && hasPeerDepError(installOutput)) {
       print("\n\x1b[33m⚠ Peer dependency conflict detected, retrying with --legacy-peer-deps...\x1b[0m\n\n");
-      
-      npmArgs = hasPackageLock 
-        ? ["ci", "--legacy-peer-deps", "--no-audit", "--no-fund"]
-        : ["install", "--legacy-peer-deps", "--no-audit", "--no-fund"];
-      
-      installExitCode = await runCommandWithTimeout(container, "npm", npmArgs, print, {
-        label: "Dependency installation (legacy-peer-deps)",
-        timeoutMs: 5 * 60_000,
-        bufferMs: 75,
-      });
+      installOutput = "";
+      installExitCode = await runCommandWithTimeout(
+        container, "npm", ["install", "--legacy-peer-deps", "--no-audit", "--no-fund"], captureOutput,
+        { label: "npm install --legacy-peer-deps", timeoutMs: 5 * 60_000, bufferMs: 75 }
+      );
+    }
+
+    // Strategy 4: Force install
+    if (installExitCode !== 0) {
+      print("\n\x1b[33m⚠ Install failed, trying with --force...\x1b[0m\n\n");
+      installOutput = "";
+      installExitCode = await runCommandWithTimeout(
+        container, "npm", ["install", "--force", "--no-audit", "--no-fund"], captureOutput,
+        { label: "npm install --force", timeoutMs: 5 * 60_000, bufferMs: 75 }
+      );
+    }
+
+    // Strategy 5: Ignore scripts (for native deps that fail postinstall)
+    if (installExitCode !== 0 && hasPostInstallError(installOutput)) {
+      print("\n\x1b[33m⚠ Postinstall script failed, trying with --ignore-scripts...\x1b[0m\n\n");
+      installExitCode = await runCommandWithTimeout(
+        container, "npm", ["install", "--ignore-scripts", "--legacy-peer-deps", "--no-audit", "--no-fund"], print,
+        { label: "npm install --ignore-scripts", timeoutMs: 5 * 60_000, bufferMs: 75 }
+      );
     }
 
     if (installExitCode !== 0) {
@@ -415,25 +446,16 @@ export async function startDevServer(
     // Start dev server
     onStatusChange?.("running");
     
-    // Detect framework and add host flags for Vite/CRA
-    const isVite = pkg?.devDependencies?.vite || pkg?.dependencies?.vite;
-    const isCRA = pkg?.dependencies?.["react-scripts"] || pkg?.devDependencies?.["react-scripts"];
+    // Enhanced framework detection and configuration
+    const frameworkConfig = detectFrameworkConfig(pkg);
     
-    let serverArgs = ["run", devScript];
+    let serverArgs = frameworkConfig.args || ["run", devScript];
+    let serverEnv = frameworkConfig.env;
     
-    if (isVite) {
-      // Vite: add --host flag to expose to network
-      serverArgs = ["run", devScript, "--", "--host", "0.0.0.0"];
-      onOutput?.(`\x1b[36m➜ Running npm run ${devScript} -- --host 0.0.0.0 (Vite detected)...\x1b[0m\n\n`);
-    } else if (isCRA) {
-      // CRA: set HOST env var
-      onOutput?.(`\x1b[36m➜ Running npm run ${devScript} (React Scripts detected)...\x1b[0m\n\n`);
-    } else {
-      onOutput?.(`\x1b[36m➜ Running npm run ${devScript}...\x1b[0m\n\n`);
-    }
+    onOutput?.(`\x1b[36m➜ Running npm ${serverArgs.join(" ")}${frameworkConfig.name ? ` (${frameworkConfig.name} detected)` : ""}...\x1b[0m\n\n`);
     
     const serverProcess = await container.spawn("npm", serverArgs, {
-      env: isCRA ? { HOST: "0.0.0.0", PORT: "3000" } : undefined,
+      env: serverEnv,
     });
     
     // Patterns that indicate the server is ready (fallback detection)
@@ -520,6 +542,147 @@ function hasPeerDepError(output: string): boolean {
     /unable to resolve dependency tree/i,
   ];
   return peerDepPatterns.some(pattern => pattern.test(output));
+}
+
+// Helper: detect postinstall script errors
+function hasPostInstallError(output: string): boolean {
+  const postInstallPatterns = [
+    /postinstall/i,
+    /node-pre-gyp/i,
+    /node-gyp/i,
+    /prebuild-install/i,
+    /ENOENT.*binding\.gyp/i,
+    /gyp ERR!/i,
+  ];
+  return postInstallPatterns.some(pattern => pattern.test(output));
+}
+
+// Enhanced framework detection with configuration
+interface FrameworkConfig {
+  name?: string;
+  args: string[];
+  env?: Record<string, string>;
+}
+
+function detectFrameworkConfig(pkg: Record<string, unknown> | null): FrameworkConfig {
+  if (!pkg) return { args: ["run", "dev"] };
+  
+  const deps = { ...pkg.dependencies as Record<string, string>, ...pkg.devDependencies as Record<string, string> };
+  const scripts = pkg.scripts as Record<string, string> || {};
+  
+  // Find the dev script name
+  const devScriptName = ["dev", "start", "serve", "develop"].find(s => scripts[s]);
+  const baseArgs = devScriptName ? ["run", devScriptName] : ["run", "dev"];
+  
+  // Vite
+  if (deps.vite) {
+    return { 
+      name: "Vite", 
+      args: [...baseArgs, "--", "--host", "0.0.0.0"],
+    };
+  }
+  
+  // Create React App
+  if (deps["react-scripts"]) {
+    return { 
+      name: "Create React App", 
+      args: baseArgs,
+      env: { HOST: "0.0.0.0", PORT: "3000", BROWSER: "none" },
+    };
+  }
+  
+  // Next.js
+  if (deps.next) {
+    return { 
+      name: "Next.js", 
+      args: [...baseArgs, "--", "-H", "0.0.0.0"],
+      env: { NEXT_TELEMETRY_DISABLED: "1" },
+    };
+  }
+  
+  // Vue CLI
+  if (deps["@vue/cli-service"]) {
+    return { 
+      name: "Vue CLI", 
+      args: [...baseArgs, "--", "--host", "0.0.0.0"],
+    };
+  }
+  
+  // Angular CLI
+  if (deps["@angular/cli"] || deps["@angular-devkit/build-angular"]) {
+    return { 
+      name: "Angular CLI", 
+      args: [...baseArgs, "--", "--host", "0.0.0.0"],
+    };
+  }
+  
+  // Nuxt
+  if (deps.nuxt || deps.nuxt3) {
+    return { 
+      name: "Nuxt", 
+      args: [...baseArgs, "--", "--host", "0.0.0.0"],
+      env: { NUXT_TELEMETRY_DISABLED: "1" },
+    };
+  }
+  
+  // SvelteKit
+  if (deps["@sveltejs/kit"]) {
+    return { 
+      name: "SvelteKit", 
+      args: [...baseArgs, "--", "--host", "0.0.0.0"],
+    };
+  }
+  
+  // Remix
+  if (deps["@remix-run/dev"]) {
+    return { name: "Remix", args: baseArgs };
+  }
+  
+  // Astro
+  if (deps.astro) {
+    return { 
+      name: "Astro", 
+      args: [...baseArgs, "--", "--host", "0.0.0.0"],
+    };
+  }
+  
+  // Gatsby
+  if (deps.gatsby) {
+    return { 
+      name: "Gatsby", 
+      args: [...baseArgs, "--", "-H", "0.0.0.0"],
+      env: { GATSBY_TELEMETRY_DISABLED: "1" },
+    };
+  }
+  
+  // Parcel
+  if (deps.parcel || deps["parcel-bundler"]) {
+    return { 
+      name: "Parcel", 
+      args: [...baseArgs, "--", "--host", "0.0.0.0"],
+    };
+  }
+  
+  // Express/backend - just run normally
+  if (deps.express || deps.fastify || deps.koa || deps.hapi) {
+    return { 
+      name: deps.express ? "Express" : deps.fastify ? "Fastify" : deps.koa ? "Koa" : "Hapi",
+      args: baseArgs,
+      env: { PORT: "3000", HOST: "0.0.0.0" },
+    };
+  }
+  
+  // Webpack Dev Server
+  if (deps["webpack-dev-server"]) {
+    return { 
+      name: "Webpack", 
+      args: baseArgs,
+      env: { HOST: "0.0.0.0" },
+    };
+  }
+  
+  // Default
+  return { args: baseArgs };
 }
 
 // Find the best directory to serve for static sites
