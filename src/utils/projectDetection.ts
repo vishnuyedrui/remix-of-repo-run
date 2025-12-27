@@ -17,6 +17,8 @@ export interface ProjectInfo {
   label: string;
   canRun: boolean;
   description: string;
+  needsBackend?: boolean;
+  backendHint?: string;
 }
 
 const PROJECT_TYPE_INFO: Record<ProjectType, Omit<ProjectInfo, "type">> = {
@@ -78,7 +80,13 @@ export function detectProjectType(files: GitHubFile[]): ProjectInfo {
   
   // Check for Node.js (package.json)
   if (filePaths.has("package.json")) {
-    return { type: "nodejs", ...PROJECT_TYPE_INFO.nodejs };
+    // Try to detect if it needs an external backend
+    const backendInfo = detectBackendRequirements(files);
+    return { 
+      type: "nodejs", 
+      ...PROJECT_TYPE_INFO.nodejs,
+      ...backendInfo
+    };
   }
   
   // Check for Java (pom.xml, build.gradle, *.java files)
@@ -151,4 +159,64 @@ export function detectProjectType(files: GitHubFile[]): ProjectInfo {
 
 export function getProjectTypeInfo(type: ProjectType): Omit<ProjectInfo, "type"> {
   return PROJECT_TYPE_INFO[type];
+}
+
+// Detect if project likely needs an external backend API
+function detectBackendRequirements(files: GitHubFile[]): { needsBackend?: boolean; backendHint?: string } {
+  const filePaths = files.map(f => f.path.toLowerCase());
+  const fileContents = new Set(filePaths);
+  
+  // Common patterns that indicate external backend requirements
+  const backendIndicators: { pattern: RegExp | string[]; hint: string }[] = [
+    {
+      // Separate backend repo references in README or code
+      pattern: /backend|api.*repo|server.*repo|api.*github|backend.*github/i,
+      hint: "This project appears to need a separate backend API server"
+    },
+    {
+      // Environment variable files suggesting API URLs
+      pattern: ['.env.example', '.env.sample', '.env.template'],
+      hint: "Check .env files for required API URLs and keys"
+    },
+  ];
+  
+  // Check for .env* files that might indicate backend config needed
+  const envFiles = filePaths.filter(f => 
+    f.includes('.env') && 
+    !f.endsWith('.env') && // Skip actual .env file
+    (f.endsWith('.example') || f.endsWith('.sample') || f.endsWith('.template') || f.endsWith('.local'))
+  );
+  
+  if (envFiles.length > 0) {
+    return {
+      needsBackend: true,
+      backendHint: "This project may need API configuration. Check .env files for required settings."
+    };
+  }
+  
+  // Check for common API service folders/patterns
+  const hasApiConfig = filePaths.some(f => 
+    f.includes('/api/') || 
+    f.includes('/services/') || 
+    f.includes('apiconfig') ||
+    f.includes('api.js') ||
+    f.includes('api.ts') ||
+    f.includes('apiservice')
+  );
+  
+  // Check for axios/fetch service files
+  const hasHttpClient = filePaths.some(f =>
+    f.includes('axios') ||
+    f.includes('httpservice') ||
+    f.includes('httpclient')
+  );
+  
+  if (hasApiConfig || hasHttpClient) {
+    return {
+      needsBackend: true,
+      backendHint: "This frontend may require a backend API to display content. If blank, the API may be unavailable."
+    };
+  }
+  
+  return {};
 }
