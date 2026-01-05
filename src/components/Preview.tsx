@@ -245,7 +245,7 @@ export function Preview() {
           </div>
         )}
 
-        {previewUrl && (
+        {previewUrl && !previewUrl.startsWith("http://localhost") && !previewUrl.startsWith("http://127.0.0.1") && (
           <div className="w-full h-full relative flex flex-col">
             {/* Backend warning banner */}
             {projectInfo?.needsBackend && showBackendWarning && (
@@ -274,6 +274,42 @@ export function Preview() {
               referrerPolicy="no-referrer-when-downgrade"
               allow="cross-origin-isolated"
             />
+          </div>
+        )}
+
+        {/* Show error for localhost URLs that slipped through */}
+        {previewUrl && (previewUrl.startsWith("http://localhost") || previewUrl.startsWith("http://127.0.0.1")) && (
+          <div className="h-full flex flex-col items-center justify-center text-muted-foreground px-6">
+            <div className="w-16 h-16 rounded-full bg-warning/20 flex items-center justify-center mb-4">
+              <AlertTriangle className="w-8 h-8 text-warning" />
+            </div>
+            <h3 className="text-lg font-semibold text-foreground mb-2">
+              Invalid Preview URL
+            </h3>
+            <p className="text-sm text-center max-w-md mb-6">
+              The server returned a localhost URL ({previewUrl}) which cannot be accessed in the preview.
+              The server needs to bind to 0.0.0.0 for external access.
+            </p>
+            <div className="flex gap-3">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleShowTerminalHint}
+                className="gap-2"
+              >
+                <Terminal className="w-4 h-4" />
+                Show Terminal Hints
+              </Button>
+              <Button
+                variant="default"
+                size="sm"
+                onClick={handleRestartServer}
+                className="gap-2"
+              >
+                <RotateCcw className="w-4 h-4" />
+                Restart Server
+              </Button>
+            </div>
           </div>
         )}
 

@@ -838,10 +838,8 @@ app.use((req, res) => {
   res.status(404).send('Not found: ' + req.path);
 });
 
-app.listen(PORT, () => {
-  console.log('Static server available on http://localhost:' + PORT);
-  console.log('Available on:');
-  console.log('  http://localhost:' + PORT);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log('Static server listening on 0.0.0.0:' + PORT);
 });
 `;
 }
@@ -858,6 +856,11 @@ async function serveStaticSite(
 
   const handleServerReady = (url: string, port?: number) => {
     if (serverReadyFired) return;
+    // Skip localhost URLs - they're not accessible from the iframe
+    if (url.startsWith("http://localhost") || url.startsWith("http://127.0.0.1")) {
+      onOutput?.(`\n\x1b[33m⚠ Detected localhost URL (${url}) - waiting for external URL...\x1b[0m\n`);
+      return;
+    }
     serverReadyFired = true;
     if (serverReadyTimeout) clearTimeout(serverReadyTimeout);
     onOutput?.(`\n\x1b[32m✓ Static server ready${port ? ` on port ${port}` : ''}\x1b[0m\n`);
@@ -941,13 +944,9 @@ async function serveStaticSite(
         write(data) {
           onOutput?.(data);
           
-          // Detect server ready from output
-          if (!serverReadyFired && /available on|listening/i.test(data)) {
-            setTimeout(() => {
-              if (!serverReadyFired) {
-                handleServerReady("http://localhost:3000", 3000);
-              }
-            }, 500);
+          // Detect server output - but don't set localhost URL directly
+          if (!serverReadyFired && /listening on 0\.0\.0\.0/i.test(data)) {
+            onOutput?.("\n\x1b[33m⚠ Server started, waiting for WebContainer to expose external URL...\x1b[0m\n");
           }
         },
       })
