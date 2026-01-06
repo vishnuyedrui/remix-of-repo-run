@@ -1,6 +1,6 @@
 import { useState, useEffect, memo } from "react";
 import { motion } from "motion/react";
-import { Github, Rocket, Settings, Code2, Terminal as TerminalIcon, Heart, Eye, ChevronDown, CreditCard } from "lucide-react";
+import { Github, Rocket, Settings, Code2, Terminal as TerminalIcon, Heart, Eye, ChevronDown, CreditCard, MessageSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SettingsModal } from "./SettingsModal";
@@ -341,6 +341,17 @@ export function LandingPage() {
             <Heart className="w-5 h-5 text-red-500 fill-red-500" />
             <span className="hidden sm:inline font-medium">Donate</span>
           </motion.button>
+          <motion.a
+            href="https://docs.google.com/forms/d/e/1FAIpQLScmI8HjRsMzEoDRXEMFRfKggh6eTaCJKTmmP5vLutAMpPDYKg/viewform?usp=dialog"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-2 text-pink-600 hover:text-pink-500 transition-colors px-3 py-2 rounded-lg hover:bg-pink-100/50"
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+          >
+            <MessageSquare className="w-5 h-5" />
+            <span className="hidden sm:inline font-medium">Feedback</span>
+          </motion.a>
           <motion.button
             whileHover={{ rotate: 180, scale: 1.1 }}
             whileTap={{ scale: 0.95 }}
