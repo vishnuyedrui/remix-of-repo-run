@@ -536,47 +536,9 @@ export function LandingPage() {
                         <span className="text-green-500 mt-0.5">✓</span>
                         <span><strong>Static HTML/CSS/JS</strong> – Vanilla projects</span>
                       </li>
-                      <li className="flex items-start gap-2">
-                        <span className="text-green-500 mt-0.5">✓</span>
-                        <span><strong>Python (basic)</strong> – Via Pyodide WebAssembly</span>
-                      </li>
-                    </ul>
-                  </div>
-
-                  {/* Cannot Run */}
-                  <div>
-                    <h4 className="text-sm font-medium text-amber-600 mb-2 flex items-center gap-1.5">
-                      <span className="w-2 h-2 bg-amber-500 rounded-full"></span>
-                      Browse Only (Cloud Deploy Available)
-                    </h4>
-                    <ul className="text-sm text-gray-600 space-y-1.5">
-                      <li className="flex items-start gap-2">
-                        <span className="text-amber-500 mt-0.5">○</span>
-                        <span><strong>Java, Kotlin, Scala</strong> – Requires JVM</span>
-                      </li>
-                      <li className="flex items-start gap-2">
-                        <span className="text-amber-500 mt-0.5">○</span>
-                        <span><strong>Go, Rust, C/C++</strong> – Native compilation needed</span>
-                      </li>
-                      <li className="flex items-start gap-2">
-                        <span className="text-amber-500 mt-0.5">○</span>
-                        <span><strong>PHP, Ruby, .NET</strong> – Server-side runtimes</span>
-                      </li>
-                      <li className="flex items-start gap-2">
-                        <span className="text-amber-500 mt-0.5">○</span>
-                        <span><strong>Native Node modules</strong> – Uses C++ bindings</span>
-                      </li>
-                      <li className="flex items-start gap-2">
-                        <span className="text-amber-500 mt-0.5">○</span>
-                        <span><strong>Docker-only projects</strong> – Use Cloud Deploy mode</span>
-                      </li>
                     </ul>
                   </div>
                 </div>
-
-                <p className="mt-4 text-xs text-gray-500 text-center">
-                  💡 Tip: Switch to <strong>Cloud Deploy</strong> mode for full Docker support and any language!
-                </p>
               </div>
             </motion.div>
           </div>
